@@ -4,9 +4,8 @@ import { mutation, query } from "./_generated/server";
 export const syncUser = mutation({
   args: {
     clerkId: v.string(),
-    name: v.string(),
+    username: v.string(),
     email: v.string(),
-    image: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -15,19 +14,27 @@ export const syncUser = mutation({
       .unique();
 
     if (existing) {
+      if (
+        existing.username !== args.username ||
+        existing.email !== args.email
+      ) {
+        await ctx.db.patch(existing._id, {
+          username: args.username,
+          email: args.email,
+        });
+      }
       return existing._id;
     }
 
     return await ctx.db.insert("users", {
       clerkId: args.clerkId,
-      name: args.name,
+      username: args.username,
       email: args.email,
-      image: args.image,
-      role: "candidate",
+      rating: 1000,
+      createdAt: Date.now(),
     });
   },
 });
-
 
 export const getUser = query({
   handler: async (ctx) => {
