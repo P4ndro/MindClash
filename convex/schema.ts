@@ -10,3 +10,7 @@ export default defineSchema({
     role: v.union(v.literal("candidate"), v.literal("interviewer")),
   }).index("by_clerkId", ["clerkId"]),
 });
+
+
+
+
