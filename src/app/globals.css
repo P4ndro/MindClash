@@ -1,0 +1,29 @@
+@import "tailwindcss";
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+body {
+  background: #09090b;
+  color: #fafafa;
+}
+
+.page-shell {
+  min-height: 100vh;
+}
+
+.center-stack {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
