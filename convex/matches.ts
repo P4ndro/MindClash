@@ -46,6 +46,7 @@ export const joinMatch = mutation({
     }
 
     const now = Date.now();
+    const questionDurationMs = 30_000;
 
     if (match.mode === "duel") {
       if (!args.player2Id) {
@@ -63,6 +64,23 @@ export const joinMatch = mutation({
         startedAt: now,
         updatedAt: now,
       });
+
+      const existingState = await ctx.db
+        .query("matchState")
+        .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
+        .unique();
+      if (!existingState) {
+        await ctx.db.insert("matchState", {
+          matchId: args.matchId,
+          currentQuestion: 0,
+          timeRemaining: questionDurationMs,
+          phase: "question",
+          questionStartedAt: now,
+          questionEndsAt: now + questionDurationMs,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
       return args.matchId;
     }
 
@@ -81,6 +99,23 @@ export const joinMatch = mutation({
       startedAt: now,
       updatedAt: now,
     });
+
+    const existingState = await ctx.db
+      .query("matchState")
+      .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
+      .unique();
+    if (!existingState) {
+      await ctx.db.insert("matchState", {
+        matchId: args.matchId,
+        currentQuestion: 0,
+        timeRemaining: questionDurationMs,
+        phase: "question",
+        questionStartedAt: now,
+        questionEndsAt: now + questionDurationMs,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
     return args.matchId;
   },
 });
