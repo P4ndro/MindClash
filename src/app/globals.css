@@ -1,4 +1,25 @@
 @import "tailwindcss";
+
+@theme {
+  --color-background: #051426;
+  --color-on-background: #d5e3fd;
+  --color-surface: #051426;
+  --color-surface-container: #122033;
+  --color-surface-container-low: #0d1c2f;
+  --color-surface-container-high: #1c2b3e;
+  --color-surface-container-highest: #273649;
+  --color-surface-variant: #273649;
+  --color-on-surface-variant: #c2c6d6;
+  --color-primary: #adc6ff;
+  --color-on-primary-container: #00285d;
+  --color-secondary: #ddb7ff;
+  --color-secondary-container: #6f00be;
+  --color-on-secondary-container: #d6a9ff;
+  --color-tertiary: #4edea3;
+  --color-error: #ffb4ab;
+  --color-outline-variant: #424754;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -7,7 +28,7 @@ html,
 body {
   margin: 0;
   padding: 0;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "Inter", Arial, Helvetica, sans-serif;
 }
 
 body {
@@ -19,11 +40,17 @@ body {
   min-height: 100vh;
 }
 
-.center-stack {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  vertical-align: middle;
+}
+
+.fill-icon {
+  font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.glass-panel {
+  background: rgba(44, 58, 78, 0.6);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
