@@ -21,6 +21,7 @@ export const syncUser = mutation({
         await ctx.db.patch(existing._id, {
           username: args.username,
           email: args.email,
+          updatedAt: Date.now(),
         });
       }
       return existing._id;
