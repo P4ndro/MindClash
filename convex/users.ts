@@ -31,6 +31,7 @@ export const syncUser = mutation({
       username: args.username,
       email: args.email,
       rating: 1000,
+      updatedAt: Date.now(),
       createdAt: Date.now(),
     });
   },

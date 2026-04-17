@@ -8,6 +8,7 @@ export default defineSchema({
     email: v.string(),
     rating: v.number(),
     createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_clerkId", ["clerkId"])
     .index("by_email", ["email"])
@@ -17,25 +18,39 @@ export default defineSchema({
 
   teams: defineTable({
     name: v.string(),
-  }),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_createdAt", ["createdAt"]),
 
   teamMembers: defineTable({
     userId: v.id("users"),
     teamId: v.id("teams"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_teamId", ["teamId"])
     .index("by_team_user", ["teamId", "userId"]),
 
   matches: defineTable({
+    mode: v.union(v.literal("duel"), v.literal("team")),
     player1Id: v.optional(v.id("users")),
     player2Id: v.optional(v.id("users")),
     team1Id: v.optional(v.id("teams")),
     team2Id: v.optional(v.id("teams")),
-    status: v.string(),
+    winnerUserId: v.optional(v.id("users")),
+    status: v.union(
+      v.literal("waiting"),
+      v.literal("active"),
+      v.literal("finished"),
+      v.literal("cancelled"),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
     startedAt: v.optional(v.number()),
     endedAt: v.optional(v.number()),
   })
+    .index("by_mode", ["mode"])
     .index("by_status", ["status"])
     .index("by_player1", ["player1Id"])
     .index("by_player2", ["player2Id"])
@@ -47,20 +62,33 @@ export default defineSchema({
     matchId: v.id("matches"),
     player1Score: v.number(),
     player2Score: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   }).index("by_matchId", ["matchId"]),
 
   matchState: defineTable({
     matchId: v.id("matches"),
     currentQuestion: v.number(),
     timeRemaining: v.number(),
-    stateData: v.string(),
+    phase: v.union(
+      v.literal("lobby"),
+      v.literal("countdown"),
+      v.literal("question"),
+      v.literal("review"),
+      v.literal("finished"),
+    ),
+    questionStartedAt: v.optional(v.number()),
+    questionEndsAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   }).index("by_matchId", ["matchId"]),
 
   questions: defineTable({
     text: v.string(),
-    difficulty: v.string(),
+    difficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
     category: v.string(),
     createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_category", ["category"])
     .index("by_difficulty", ["difficulty"])
@@ -70,12 +98,16 @@ export default defineSchema({
   answers: defineTable({
     questionId: v.id("questions"),
     correctValue: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   }).index("by_questionId", ["questionId"]),
 
   matchQuestions: defineTable({
     matchId: v.id("matches"),
     questionId: v.id("questions"),
     order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_matchId", ["matchId"])
     .index("by_questionId", ["questionId"])
@@ -87,6 +119,9 @@ export default defineSchema({
     submittedAnswer: v.string(),
     isCorrect: v.boolean(),
     responseTime: v.number(),
+    submittedAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_matchQuestionId", ["matchQuestionId"])
@@ -94,9 +129,16 @@ export default defineSchema({
 
   tournaments: defineTable({
     name: v.string(),
-    type: v.string(),
-    status: v.string(),
+    type: v.union(v.literal("single_elimination"), v.literal("round_robin")),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("registration_open"),
+      v.literal("active"),
+      v.literal("finished"),
+      v.literal("cancelled"),
+    ),
     createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_status", ["status"])
     .index("by_type", ["type"])
@@ -106,6 +148,8 @@ export default defineSchema({
     userId: v.id("users"),
     tournamentId: v.id("tournaments"),
     joinedAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_tournamentId", ["tournamentId"])
@@ -115,6 +159,8 @@ export default defineSchema({
     tournamentId: v.id("tournaments"),
     matchId: v.id("matches"),
     roundNumber: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_tournamentId", ["tournamentId"])
     .index("by_matchId", ["matchId"])
@@ -122,9 +168,15 @@ export default defineSchema({
 
   notifications: defineTable({
     userId: v.id("users"),
-    type: v.string(),
+    type: v.union(
+      v.literal("match_found"),
+      v.literal("match_invite"),
+      v.literal("tournament_start"),
+      v.literal("system"),
+    ),
     isRead: v.boolean(),
     createdAt: v.number(),
+    updatedAt: v.number(),
   })
     .index("by_userId", ["userId"])
     .index("by_user_read", ["userId", "isRead"])
