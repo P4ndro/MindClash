@@ -22,7 +22,7 @@ export function UserSync() {
     if (lastSyncedId.current === user.id) return;
 
     const email = user.primaryEmailAddress?.emailAddress ?? "";
-    const name =
+    const username =
       [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
       user.fullName ||
       user.username ||
@@ -30,9 +30,8 @@ export function UserSync() {
 
     void syncUser({
       clerkId: user.id,
+      username,
       email,
-      name,
-      image: user.imageUrl ?? undefined,
     }).then(() => {
       lastSyncedId.current = user.id;
     });
