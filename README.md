@@ -1,58 +1,122 @@
 # MindClash
 
-MindClash is a real-time competitive learning platform where two players enter the same arena, answer the same questions, and race on both speed and accuracy.
+MindClash is a real-time competitive learning platform. Two players enter the same queue, receive the same questions, answer under time pressure, and resolve a match live.
 
-The project is built around one core idea: turn academic practice into a live duel experience that feels like esports while remaining fair, transparent, and skill-driven.
+The product objective is straightforward: make academic practice competitive, measurable, and fair without sacrificing reliability of multiplayer state.
 
-## The Story
+## What This Project Is
 
-Most study tools are solo, static, and low-pressure. MindClash flips that model:
+MindClash is a full-stack realtime application with:
 
-- You do not just solve a question, you solve it under time pressure.
-- You do not compete against a score history, you compete against a live opponent.
-- You do not wait for batch updates, the arena updates in real time for both players.
+- a public landing experience and authenticated dashboard flow,
+- queue-based duel matchmaking by `topic`, `grade`, and `faculty`,
+- server-authoritative gameplay and scoring,
+- live arena state synchronization across two clients.
 
-This repository contains the full stack for that experience: authentication, matchmaking, realtime game state, and duel resolution.
+The platform is designed so that the backend is always the source of truth for participant validation, answer acceptance, question progression, and final results.
 
-## How a Duel Works
+## Strategic Direction
 
-1. A player creates or joins a duel match.
-2. Both players receive the same current question.
-3. Each player submits one answer for that question.
-4. The game advances to the next question when rules allow.
-5. Final scores determine the winner (or tie), and match results are shown.
+Most learning products are asynchronous and solo. MindClash deliberately takes the opposite position:
 
-## Architecture at a Glance
+- synchronous competition instead of isolated practice,
+- deterministic rules instead of ambiguous grading,
+- live state replication instead of delayed updates.
 
-### Frontend (`src/`)
-- **Framework:** Next.js (App Router) + React
-- **UI role:** Render arena state, trigger gameplay actions, handle loading/errors
-- **Auth UX:** Clerk sign-in/sign-up flow
+This is not a question bank website. It is a realtime duel system built for repeatable head-to-head sessions.
 
-### Backend (`convex/`)
-- **Runtime:** Convex functions and realtime database
-- **Data model:** Match, question, answer, and user records in `convex/schema.ts`
-- **Game logic:** Match lifecycle and scoring in `convex/gameplay.ts`, `convex/matches.ts`, and `convex/questions.ts`
-- **Realtime:** Clients subscribe to Convex queries for live updates
+## Current Implementation Status
 
-### Identity and Access
-- **Authentication:** Clerk
-- **Session-aware actions:** Convex functions validate authenticated users before protected mutations
+The project has completed core hardening milestones and is now in slice stabilization.
+
+### Completed
+
+- **Realtime duel foundations**
+  - Live match state queries and gameplay mutations are wired end-to-end.
+  - Arena and matchmaking routes are integrated with Convex subscriptions.
+- **Queue specialization**
+  - Matchmaking supports queue dimensions: `topic`, `grade`, `faculty`.
+  - Server-side `findOrCreateDuelMatch` reduces create/join race conditions.
+- **Scoring policy hardening**
+  - Team scoring policy has been formalized and implemented deterministically.
+  - A pure scoring module is covered by automated tests.
+- **Authorization hardening**
+  - Role-aware question management is enforced server-side.
+  - Admin-only operations are gated with explicit authorization errors.
+- **Contract documentation**
+  - Expected success/error payload behavior for critical gameplay scenarios is documented in `docs/API_CONTRACT.md`.
+
+### In Progress (Current Milestone)
+
+The current milestone is the first fully verified realtime duel slice:
+
+1. two users join the same queue,
+2. both resolve to the same `matchId`,
+3. both submit answers,
+4. match progresses through all rounds,
+5. final result is reached without auth/session regressions.
+
+Open work is tracked in `TODO.md`.
+
+## What Comes Next
+
+Immediate priorities:
+
+- run and document clean 2-browser certification passes,
+- eliminate intermittent Clerk/Convex handshake failures for protected mutations,
+- finalize race-condition UX handling (waiting states, auto-advance sync behavior),
+- expand seeded question coverage for realistic queue depth.
+
+Near-term expansion after slice stabilization:
+
+- AI-assisted question generation tooling for admins,
+- confidence-based free-text answer evaluation with deterministic fallback,
+- richer ranking and progression systems on top of the duel core.
+
+## Final Product Goals
+
+MindClash aims to become a robust competitive learning system with:
+
+- reliable realtime duels at scale,
+- defensible fairness and scoring rules,
+- structured curriculum coverage across levels and faculties,
+- clear progression through ratings, history, and performance analytics,
+- extensibility into tournaments and advanced multiplayer formats.
+
+In practical terms: stable multiplayer first, then intelligence and product depth.
+
+## Architecture Overview
+
+### Frontend
+
+- `Next.js` App Router with `React` and `TypeScript`
+- Route-level experiences for landing, dashboard, matchmaking, and arena
+- Client rendering driven by live Convex query subscriptions
+
+### Backend
+
+- `Convex` schema, queries, and mutations for all gameplay-critical state
+- Core logic in:
+  - `convex/matches.ts`
+  - `convex/gameplay.ts`
+  - `convex/questions.ts`
+  - `convex/users.ts`
+
+### Authentication and Access
+
+- `Clerk` for identity
+- Role-aware server-side authorization for privileged question operations
+- Explicit error contracts for frontend-safe handling
 
 ## Tech Stack
 
-- Next.js 16 (App Router)
+- Next.js 16
 - React 19
 - TypeScript
 - Tailwind CSS 4
-- Clerk
 - Convex
-
-## Current Product Status
-
-MindClash already has core backend gameplay logic and a polished landing flow. The next milestone is the first complete realtime duel vertical slice (two browsers, two users, full match loop) with stronger production hardening for authorization and edge cases.
-
-See `TODO.md` for detailed execution steps and test scenarios.
+- Clerk
+- Vitest
 
 ## Local Development
 
@@ -62,25 +126,27 @@ See `TODO.md` for detailed execution steps and test scenarios.
 npm install
 ```
 
-### 2) Create your environment file
+### 2) Configure environment
 
-```bash
-copy .env.example .env.local
-```
-
-### 3) Configure required environment variables
+Create `.env.local` and define:
 
 ```env
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 CLERK_SECRET_KEY=
-CLERK_FRONTEND_API_URL=https://your-instance.clerk.accounts.dev
+CLERK_FRONTEND_API_URL=
 CONVEX_DEPLOYMENT=
 NEXT_PUBLIC_CONVEX_URL=
 ```
 
-### 4) Start backend and frontend
+Optional for admin bootstrap:
 
-Run these in separate terminals:
+```env
+ADMIN_CLERK_IDS=
+```
+
+### 3) Start services
+
+Run in separate terminals:
 
 ```bash
 npx convex dev
@@ -90,17 +156,25 @@ npx convex dev
 npm run dev
 ```
 
-App runs at `http://localhost:3000`.
+Application default: `http://localhost:3000`.
 
-## Project Structure
+### 4) Run tests
 
-- `src/app` - Next.js routes and page entry points
-- `src/components` - shared React components/providers
-- `convex` - schema and server-side functions (queries/mutations/actions)
-- `TODO.md` - implementation plan and hardening checklist
+```bash
+npm test
+```
 
-## Security Notes
+## Repository Map
 
-- Do not commit real secrets; keep them in `.env.local` only.
-- If any secret is exposed, rotate it immediately in Clerk/Convex dashboards.
-- Treat Convex mutations as the source of truth for validation and fairness checks; do not trust client-only enforcement.
+- `src/app` - route entry points and page-level UI
+- `src/components` - shared UI and client helpers
+- `convex` - schema and backend functions
+- `docs/API_CONTRACT.md` - gameplay API behavior specification
+- `TODO.md` - active roadmap and verification checklist
+
+## Security and Quality Notes
+
+- Keep secrets in `.env.local` only; never commit credentials.
+- Treat backend mutations as the authoritative guardrail for integrity.
+- Prefer explicit, documented error contracts over implicit client assumptions.
+- Validate every major gameplay change with 2-browser realtime tests.
