@@ -1,14 +1,106 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { requireAdmin } from "./auth";
+
+const collegeFaculties = ["Management", "Computer Science", "Law"];
+const seededCollegeQuestions: Array<{
+  category: string;
+  faculty: string;
+  text: string;
+  correctValue: string;
+  difficulty: "easy" | "medium" | "hard";
+}> = [
+  {
+    faculty: "Computer Science",
+    category: "Databases",
+    text: "Which SQL keyword is used to retrieve data from a table?",
+    correctValue: "SELECT",
+    difficulty: "easy",
+  },
+  {
+    faculty: "Computer Science",
+    category: "Object-Oriented Programming (Java)",
+    text: "Which Java keyword is used to inherit from a class?",
+    correctValue: "extends",
+    difficulty: "easy",
+  },
+  {
+    faculty: "Computer Science",
+    category: "Theory of Computation",
+    text: "What machine model is commonly used to define decidability?",
+    correctValue: "Turing machine",
+    difficulty: "medium",
+  },
+  {
+    faculty: "Computer Science",
+    category: "Data Structures and Algorithms",
+    text: "What is the average time complexity of binary search on a sorted array?",
+    correctValue: "O(log n)",
+    difficulty: "medium",
+  },
+  {
+    faculty: "Computer Science",
+    category: "Computer Networks",
+    text: "Which protocol is used for secure web traffic?",
+    correctValue: "HTTPS",
+    difficulty: "easy",
+  },
+  {
+    faculty: "Management",
+    category: "Principles of Management",
+    text: "Which management function includes setting objectives?",
+    correctValue: "Planning",
+    difficulty: "easy",
+  },
+  {
+    faculty: "Management",
+    category: "Marketing Management",
+    text: "What does the 'P' stand for in the 4Ps marketing mix besides Price, Place, and Promotion?",
+    correctValue: "Product",
+    difficulty: "easy",
+  },
+  {
+    faculty: "Management",
+    category: "Financial Accounting",
+    text: "Which statement reports a company's assets, liabilities, and equity?",
+    correctValue: "Balance sheet",
+    difficulty: "medium",
+  },
+  {
+    faculty: "Law",
+    category: "Constitutional Law",
+    text: "What is the primary purpose of a constitution?",
+    correctValue: "To define government powers and rights",
+    difficulty: "medium",
+  },
+  {
+    faculty: "Law",
+    category: "Criminal Law",
+    text: "In criminal law, what is the term for the guilty act?",
+    correctValue: "Actus reus",
+    difficulty: "hard",
+  },
+  {
+    faculty: "Law",
+    category: "Data Protection and IT Law",
+    text: "Which regulation is a major EU framework for personal data protection?",
+    correctValue: "GDPR",
+    difficulty: "easy",
+  },
+];
 
 export const createQuestion = mutation({
   args: {
     text: v.string(),
     difficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
     category: v.string(),
+    grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
+    faculty: v.optional(v.string()),
     correctValue: v.string(),
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+
     const text = args.text.trim();
     const category = args.category.trim();
     const correctValue = args.correctValue.trim();
@@ -22,6 +114,8 @@ export const createQuestion = mutation({
       text,
       difficulty: args.difficulty,
       category,
+      grade: args.grade,
+      faculty: args.faculty?.trim() || undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -37,12 +131,54 @@ export const createQuestion = mutation({
   },
 });
 
+export const seedCollegeFacultyQuestions = mutation({
+  handler: async (ctx) => {
+    const now = Date.now();
+    const inserted: string[] = [];
+
+    for (const item of seededCollegeQuestions) {
+      const existing = await ctx.db
+        .query("questions")
+        .withIndex("by_category_grade", (q) => q.eq("category", item.category).eq("grade", "college"))
+        .collect();
+      const sameQuestion = existing.find((q) => q.text.trim() === item.text.trim() && (q.faculty ?? "") === item.faculty);
+      if (sameQuestion) continue;
+
+      const questionId = await ctx.db.insert("questions", {
+        text: item.text,
+        difficulty: item.difficulty,
+        category: item.category,
+        grade: "college",
+        faculty: item.faculty,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("answers", {
+        questionId,
+        correctValue: item.correctValue,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      inserted.push(`${item.faculty} :: ${item.category}`);
+    }
+
+    return {
+      insertedCount: inserted.length,
+      inserted,
+    };
+  },
+});
+
 export const assignQuestionsToMatch = mutation({
   args: {
     matchId: v.id("matches"),
     questionIds: v.array(v.id("questions")),
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+
     if (args.questionIds.length === 0) {
       throw new Error("At least one question is required");
     }
@@ -113,6 +249,8 @@ export const getQuestionsForMatch = query({
             text: question.text,
             difficulty: question.difficulty,
             category: question.category,
+            grade: question.grade,
+            faculty: question.faculty,
           },
         };
       }),
@@ -130,5 +268,83 @@ export const getQuestionById = query({
     const question = await ctx.db.get(args.questionId);
     if (!question) throw new Error("Question not found");
     return question;
+  },
+});
+
+export const getQuestionsForQuickPlay = query({
+  args: {
+    category: v.optional(v.string()),
+    grade: v.optional(v.union(v.literal("middle"), v.literal("high"), v.literal("college"))),
+    faculty: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(20, Math.floor(args.limit ?? 10)));
+    const normalizedCategory = args.category?.trim();
+    const normalizedFaculty = args.faculty?.trim();
+
+    if (normalizedCategory && args.grade) {
+      const questions = await ctx.db
+        .query("questions")
+        .withIndex("by_category_grade", (q) =>
+          q.eq("category", normalizedCategory).eq("grade", args.grade!),
+        )
+        .collect();
+      const filtered = normalizedFaculty
+        ? questions.filter((question) => (question.faculty ?? "") === normalizedFaculty)
+        : questions;
+      return filtered.slice(0, limit).map((question) => question._id);
+    }
+
+    if (normalizedCategory) {
+      const questions = await ctx.db
+        .query("questions")
+        .withIndex("by_category", (q) => q.eq("category", normalizedCategory))
+        .take(limit);
+      return questions.map((question) => question._id);
+    }
+
+    const questions = await ctx.db.query("questions").withIndex("by_createdAt").order("desc").take(limit);
+    return questions.map((question) => question._id);
+  },
+});
+
+export const getMatchmakingOptions = query({
+  args: {
+    grade: v.optional(v.union(v.literal("middle"), v.literal("high"), v.literal("college"))),
+    faculty: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const normalizedFaculty = args.faculty?.trim();
+    const activeTopics = await ctx.db
+      .query("topics")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+    const questions = await ctx.db.query("questions").collect();
+
+    const questionFiltered = questions.filter((q) => {
+      if (args.grade && q.grade !== args.grade) return false;
+      if (normalizedFaculty && (q.faculty ?? "") !== normalizedFaculty) return false;
+      return true;
+    });
+    const topicFromQuestions = questionFiltered.map((q) => q.category.trim()).filter(Boolean);
+
+    const topicConfigFiltered = activeTopics.filter((topic) => {
+      if (args.grade && topic.grade && topic.grade !== args.grade) return false;
+      if (args.grade === "college" && topic.grade !== "college") return false;
+      if (normalizedFaculty && (topic.faculty ?? "") !== normalizedFaculty) return false;
+      return true;
+    });
+    const topicFromConfig = topicConfigFiltered.map((topic) => topic.name.trim()).filter(Boolean);
+    const topics = Array.from(new Set([...topicFromConfig, ...topicFromQuestions])).sort((a, b) =>
+      a.localeCompare(b),
+    );
+
+    const grades = Array.from(new Set(questions.map((q) => q.grade)));
+    return {
+      topics,
+      grades,
+      faculties: collegeFaculties,
+    };
   },
 });

@@ -8,9 +8,12 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
 import type * as gameplay from "../gameplay.js";
+import type * as gameplayScoring from "../gameplayScoring.js";
 import type * as matches from "../matches.js";
 import type * as questions from "../questions.js";
+import type * as topics from "../topics.js";
 import type * as users from "../users.js";
 
 import type {
@@ -20,9 +23,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
   gameplay: typeof gameplay;
+  gameplayScoring: typeof gameplayScoring;
   matches: typeof matches;
   questions: typeof questions;
+  topics: typeof topics;
   users: typeof users;
 }>;
 

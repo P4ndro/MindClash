@@ -27,7 +27,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex items-center gap-4">
           <Link
-            href="/arena"
+            href="/matchmaking"
             className="bg-linear-to-br from-[#adc6ff] to-[#4d8eff] text-on-primary-container px-4 py-1.5 rounded-sm font-bold scale-95 active:opacity-80 transition-all"
           >
             Quick Play
@@ -90,7 +90,7 @@ export default function DashboardPage() {
                   Select your battlefield and prove your intellectual dominance in a real-time 1v1 matchup.
                 </p>
                 <Link
-                  href="/arena"
+                  href="/matchmaking"
                   className="inline-block w-full md:w-auto px-12 py-4 bg-linear-to-br from-[#adc6ff] to-[#4d8eff] text-on-primary-container text-lg font-black tracking-widest uppercase rounded-sm shadow-[0_0_24px_rgba(77,142,255,0.3)] hover:scale-[1.02] active:scale-95 transition-all"
                 >
                   Start Matchmaking

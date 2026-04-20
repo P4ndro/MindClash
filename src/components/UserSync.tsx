@@ -15,6 +15,21 @@ export function UserSync() {
   const lastSyncedId = useRef<string | null>(null);
 
   useEffect(() => {
+    // #region agent log
+    fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
+      body: JSON.stringify({
+        sessionId: "86b558",
+        runId: "pre-fix",
+        hypothesisId: "H1_H2",
+        location: "src/components/UserSync.tsx:18",
+        message: "UserSync effect tick",
+        data: { isLoaded, hasUser: Boolean(user), userId: user?.id ?? null, lastSyncedId: lastSyncedId.current },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (!isLoaded || !user) {
       lastSyncedId.current = null;
       return;
@@ -32,9 +47,42 @@ export function UserSync() {
       clerkId: user.id,
       username,
       email,
-    }).then(() => {
-      lastSyncedId.current = user.id;
-    });
+    })
+      .then(() => {
+        // #region agent log
+        fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
+          body: JSON.stringify({
+            sessionId: "86b558",
+            runId: "pre-fix",
+            hypothesisId: "H1",
+            location: "src/components/UserSync.tsx:42",
+            message: "syncUser mutation succeeded",
+            data: { userId: user.id },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
+        lastSyncedId.current = user.id;
+      })
+      .catch((error) => {
+        // #region agent log
+        fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
+          body: JSON.stringify({
+            sessionId: "86b558",
+            runId: "pre-fix",
+            hypothesisId: "H1",
+            location: "src/components/UserSync.tsx:58",
+            message: "syncUser mutation failed",
+            data: { errorMessage: error instanceof Error ? error.message : "unknown" },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
+      });
   }, [isLoaded, user, syncUser]);
 
   return null;

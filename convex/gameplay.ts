@@ -1,6 +1,7 @@
 import { mutation, query, MutationCtx } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
+import { computeMatchScores, QuestionAnswers } from "./gameplayScoring";
 
 type MatchDoc = Doc<"matches">;
 type UserId = Id<"users">;
@@ -46,6 +47,48 @@ function normalizeAnswer(value: string) {
   return value.trim().toLowerCase();
 }
 
+async function getOrCreateCourseRating(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  course: string,
+  now: number,
+) {
+  const existing = await ctx.db
+    .query("userCourseRatings")
+    .withIndex("by_user_course", (q) => q.eq("userId", userId).eq("course", course))
+    .unique();
+
+  if (existing) {
+    return existing;
+  }
+
+  const insertedId = await ctx.db.insert("userCourseRatings", {
+    userId,
+    course,
+    rating: 1000,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const inserted = await ctx.db.get(insertedId);
+  if (!inserted) throw new Error("Failed to create course rating");
+  return inserted;
+}
+
+async function applyCourseRatingDelta(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  course: string,
+  delta: number,
+  now: number,
+) {
+  const rating = await getOrCreateCourseRating(ctx, userId, course, now);
+  await ctx.db.patch(rating._id, {
+    rating: Math.max(100, rating.rating + delta),
+    updatedAt: now,
+  });
+}
+
 async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: number) {
   const match = await ctx.db.get(matchId);
   if (!match) throw new Error("Match not found");
@@ -67,9 +110,8 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
     .withIndex("by_matchId", (q) => q.eq("matchId", matchId))
     .collect();
 
-  let player1Score = 0;
-  let player2Score = 0;
-  const userTeamCache = new Map<string, Id<"teams">[]>();
+  const userTeamCache = new Map<string, string[]>();
+  const scoringQuestions: QuestionAnswers[] = [];
 
   for (const mq of matchQuestions) {
     const answersForQuestion = await ctx.db
@@ -77,36 +119,53 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
       .withIndex("by_matchQuestionId", (q) => q.eq("matchQuestionId", mq._id))
       .collect();
 
-    for (const answer of answersForQuestion) {
-      if (!answer.isCorrect) continue;
+    scoringQuestions.push({
+      matchQuestionId: mq._id.toString(),
+      answers: answersForQuestion.map((a) => ({
+        userId: a.userId.toString(),
+        isCorrect: a.isCorrect,
+      })),
+    });
 
-      if (match.mode === "duel") {
-        if (match.player1Id && answer.userId === match.player1Id) player1Score += 1;
-        if (match.player2Id && answer.userId === match.player2Id) player2Score += 1;
-        continue;
-      }
-
-      const userIdKey = answer.userId.toString();
-      let teamIds = userTeamCache.get(userIdKey);
-      if (!teamIds) {
-        const membership = await ctx.db
+    if (match.mode === "team") {
+      for (const answer of answersForQuestion) {
+        const userKey = answer.userId.toString();
+        if (userTeamCache.has(userKey)) continue;
+        const memberships = await ctx.db
           .query("teamMembers")
           .withIndex("by_userId", (q) => q.eq("userId", answer.userId))
           .collect();
-        teamIds = membership.map((m) => m.teamId);
-        userTeamCache.set(userIdKey, teamIds ?? []);
+        userTeamCache.set(
+          userKey,
+          memberships.map((m) => m.teamId.toString()),
+        );
       }
-      const resolvedTeamIds = teamIds ?? [];
-
-      if (match.team1Id && resolvedTeamIds.some((t) => t === match.team1Id)) player1Score += 1;
-      if (match.team2Id && resolvedTeamIds.some((t) => t === match.team2Id)) player2Score += 1;
     }
   }
 
-  let winnerUserId = undefined;
-  if (match.mode === "duel" && player1Score !== player2Score) {
-    winnerUserId = player1Score > player2Score ? match.player1Id : match.player2Id;
-  }
+  const userTeamMembership: Record<string, string[]> = {};
+  userTeamCache.forEach((value, key) => {
+    userTeamMembership[key] = value;
+  });
+
+  const scores = computeMatchScores({
+    mode: match.mode,
+    player1Id: match.player1Id?.toString(),
+    player2Id: match.player2Id?.toString(),
+    team1Id: match.team1Id?.toString(),
+    team2Id: match.team2Id?.toString(),
+    questions: scoringQuestions,
+    userTeamMembership,
+  });
+
+  const player1Score = scores.player1Score;
+  const player2Score = scores.player2Score;
+  const winnerUserId: Id<"users"> | undefined =
+    match.mode === "duel" && scores.winnerUserId
+      ? (scores.winnerUserId === match.player1Id?.toString()
+          ? match.player1Id
+          : match.player2Id)
+      : undefined;
 
   const existingResult = await ctx.db
     .query("matchResults")
@@ -135,6 +194,19 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
     endedAt: now,
     updatedAt: now,
   });
+
+  if (match.mode === "duel" && match.topic && match.player1Id && match.player2Id) {
+    if (player1Score > player2Score) {
+      await applyCourseRatingDelta(ctx, match.player1Id, match.topic, 16, now);
+      await applyCourseRatingDelta(ctx, match.player2Id, match.topic, -16, now);
+    } else if (player2Score > player1Score) {
+      await applyCourseRatingDelta(ctx, match.player2Id, match.topic, 16, now);
+      await applyCourseRatingDelta(ctx, match.player1Id, match.topic, -16, now);
+    } else {
+      await getOrCreateCourseRating(ctx, match.player1Id, match.topic, now);
+      await getOrCreateCourseRating(ctx, match.player2Id, match.topic, now);
+    }
+  }
 
   const state = await ctx.db
     .query("matchState")
@@ -244,6 +316,20 @@ export const advanceQuestion = mutation({
 
     const match = await ctx.db.get(args.matchId);
     if (!match) throw new Error("Match not found");
+    if (match.status === "finished") {
+      const existingResult = await ctx.db
+        .query("matchResults")
+        .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
+        .unique();
+      return {
+        hasNext: false,
+        nextQuestion: null,
+        player1Score: existingResult?.player1Score ?? 0,
+        player2Score: existingResult?.player2Score ?? 0,
+        winnerUserId: match.winnerUserId,
+        alreadyFinished: true,
+      };
+    }
     if (match.status !== "active") throw new Error("Only active matches can advance");
 
     await assertParticipant(ctx, match, currentUser._id);
@@ -394,5 +480,149 @@ export const getMatchResult = query({
       .unique();
 
     return { match, result };
+  },
+});
+
+export const getMatchState = query({
+  args: {
+    matchId: v.id("matches"),
+  },
+  handler: async (ctx, args) => {
+    const state = await ctx.db
+      .query("matchState")
+      .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
+      .unique();
+
+    return state;
+  },
+});
+
+export const getCurrentQuestionForMatch = query({
+  args: {
+    matchId: v.id("matches"),
+  },
+  handler: async (ctx, args) => {
+    const match = await ctx.db.get(args.matchId);
+    if (!match) throw new Error("Match not found");
+
+    const state = await ctx.db
+      .query("matchState")
+      .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
+      .unique();
+    if (!state) return null;
+
+    const link = await ctx.db
+      .query("matchQuestions")
+      .withIndex("by_match_order", (q) =>
+        q.eq("matchId", args.matchId).eq("order", state.currentQuestion),
+      )
+      .unique();
+    if (!link) return null;
+
+    const question = await ctx.db.get(link.questionId);
+    if (!question) return null;
+
+    return {
+      matchQuestionId: link._id,
+      order: link.order,
+      question: {
+        _id: question._id,
+        text: question.text,
+        difficulty: question.difficulty,
+        category: question.category,
+        grade: question.grade,
+        faculty: question.faculty,
+      },
+    };
+  },
+});
+
+export const getMyAnswerForCurrentQuestion = query({
+  args: {
+    matchId: v.id("matches"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return {
+        hasAnswered: false,
+      };
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
+      .unique();
+    if (!user) {
+      return {
+        hasAnswered: false,
+      };
+    }
+
+    const state = await ctx.db
+      .query("matchState")
+      .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
+      .unique();
+    if (!state) return null;
+
+    const link = await ctx.db
+      .query("matchQuestions")
+      .withIndex("by_match_order", (q) =>
+        q.eq("matchId", args.matchId).eq("order", state.currentQuestion),
+      )
+      .unique();
+    if (!link) return null;
+
+    const existingSubmission = await ctx.db
+      .query("userAnswers")
+      .withIndex("by_user_matchQuestion", (q) =>
+        q.eq("userId", user._id).eq("matchQuestionId", link._id),
+      )
+      .first();
+
+    if (!existingSubmission) {
+      return {
+        hasAnswered: false,
+      };
+    }
+
+    return {
+      hasAnswered: true,
+      isCorrect: existingSubmission.isCorrect,
+      submittedAnswer: existingSubmission.submittedAnswer,
+      responseTime: existingSubmission.responseTime,
+      submittedAt: existingSubmission.submittedAt,
+    };
+  },
+});
+
+export const getAnswersCountForCurrentQuestion = query({
+  args: {
+    matchId: v.id("matches"),
+  },
+  handler: async (ctx, args) => {
+    const state = await ctx.db
+      .query("matchState")
+      .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
+      .unique();
+    if (!state) {
+      return { count: 0 };
+    }
+
+    const link = await ctx.db
+      .query("matchQuestions")
+      .withIndex("by_match_order", (q) =>
+        q.eq("matchId", args.matchId).eq("order", state.currentQuestion),
+      )
+      .unique();
+    if (!link) {
+      return { count: 0 };
+    }
+
+    const answers = await ctx.db
+      .query("userAnswers")
+      .withIndex("by_matchQuestionId", (q) => q.eq("matchQuestionId", link._id))
+      .collect();
+    return { count: answers.length };
   },
 });

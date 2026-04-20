@@ -2,11 +2,26 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  topics: defineTable({
+    name: v.string(),
+    slug: v.string(),
+    grade: v.optional(v.union(v.literal("middle"), v.literal("high"), v.literal("college"))),
+    faculty: v.optional(v.string()),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_name", ["name"])
+    .index("by_isActive", ["isActive"])
+    .index("by_grade_faculty", ["grade", "faculty"]),
+
   users: defineTable({
     clerkId: v.string(),
     username: v.string(),
     email: v.string(),
     rating: v.number(),
+    role: v.optional(v.union(v.literal("admin"), v.literal("user"))),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -14,7 +29,19 @@ export default defineSchema({
     .index("by_email", ["email"])
     .index("by_username", ["username"])
     .index("by_rating", ["rating"])
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_role", ["role"]),
+
+  userCourseRatings: defineTable({
+    userId: v.id("users"),
+    course: v.string(),
+    rating: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_course", ["course"])
+    .index("by_user_course", ["userId", "course"]),
 
   teams: defineTable({
     name: v.string(),
@@ -34,6 +61,9 @@ export default defineSchema({
 
   matches: defineTable({
     mode: v.union(v.literal("duel"), v.literal("team")),
+    topic: v.optional(v.string()),
+    grade: v.optional(v.union(v.literal("middle"), v.literal("high"), v.literal("college"))),
+    faculty: v.optional(v.string()),
     player1Id: v.optional(v.id("users")),
     player2Id: v.optional(v.id("users")),
     team1Id: v.optional(v.id("teams")),
@@ -56,7 +86,8 @@ export default defineSchema({
     .index("by_player2", ["player2Id"])
     .index("by_team1", ["team1Id"])
     .index("by_team2", ["team2Id"])
-    .index("by_startedAt", ["startedAt"]),
+    .index("by_startedAt", ["startedAt"])
+    .index("by_mode_status_topic_grade_faculty", ["mode", "status", "topic", "grade", "faculty"]),
 
   matchResults: defineTable({
     matchId: v.id("matches"),
@@ -87,13 +118,17 @@ export default defineSchema({
     text: v.string(),
     difficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
     category: v.string(),
+    grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
+    faculty: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_category", ["category"])
     .index("by_difficulty", ["difficulty"])
     .index("by_createdAt", ["createdAt"])
-    .index("by_category_difficulty", ["category", "difficulty"]),
+    .index("by_category_difficulty", ["category", "difficulty"])
+    .index("by_category_grade", ["category", "grade"])
+    .index("by_category_grade_faculty", ["category", "grade", "faculty"]),
 
   answers: defineTable({
     questionId: v.id("questions"),
