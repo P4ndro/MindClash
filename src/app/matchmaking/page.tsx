@@ -15,6 +15,11 @@ const gradeOptions = [
 
 type GradeValue = (typeof gradeOptions)[number]["value"];
 
+function debugLog(event: string, data?: Record<string, unknown>) {
+  if (process.env.NODE_ENV !== "development") return;
+  console.debug(`[matchmaking] ${event}`, data ?? {});
+}
+
 export default function MatchmakingPage() {
   const router = useRouter();
   const { isLoaded: isClerkLoaded, isSignedIn, user: clerkUser } = useUser();
@@ -80,56 +85,27 @@ export default function MatchmakingPage() {
   }, [selectedGrade, selectedFaculty, selectedTopic]);
 
   useEffect(() => {
-    // #region agent log
-    fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-      body: JSON.stringify({
-        sessionId: "86b558",
-        runId: "pre-fix",
-        hypothesisId: "H1_H2_H3",
-        location: "src/app/matchmaking/page.tsx:48",
-        message: "matchmaking state snapshot",
-        data: {
-          selectedTopic,
-          selectedGrade,
-          selectedFaculty,
-          hasCurrentUser: Boolean(currentUser),
-          optionsCount: options?.topics?.length ?? -1,
-          waitingCount: waitingDuels?.length ?? -1,
-          questionCount: questionIds?.length ?? -1,
-          ratingsStatus:
-            courseRatings === undefined ? "loading" : courseRatings === null ? "null" : "loaded",
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
+    debugLog("state snapshot", {
+      selectedTopic,
+      selectedGrade,
+      selectedFaculty,
+      hasCurrentUser: Boolean(currentUser),
+      optionsCount: options?.topics?.length ?? -1,
+      waitingCount: waitingDuels?.length ?? -1,
+      questionCount: questionIds?.length ?? -1,
+      ratingsStatus: courseRatings === undefined ? "loading" : courseRatings === null ? "null" : "loaded",
+    });
   }, [selectedTopic, selectedGrade, selectedFaculty, currentUser, options, waitingDuels, questionIds, courseRatings]);
 
   async function handleFindMatch() {
-    // #region agent log
-    fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-      body: JSON.stringify({
-        sessionId: "86b558",
-        runId: "pre-fix",
-        hypothesisId: "H1_H2_H3",
-        location: "src/app/matchmaking/page.tsx:70",
-        message: "start matchmaking clicked",
-        data: {
-          selectedTopic,
-          selectedGrade,
-          selectedFaculty,
-          hasCurrentUser: Boolean(currentUser),
-          waitingCount: waitingDuels?.length ?? -1,
-          questionCount: questionIds?.length ?? -1,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
+    debugLog("start matchmaking clicked", {
+      selectedTopic,
+      selectedGrade,
+      selectedFaculty,
+      hasCurrentUser: Boolean(currentUser),
+      waitingCount: waitingDuels?.length ?? -1,
+      questionCount: questionIds?.length ?? -1,
+    });
     if (!selectedTopic) {
       setError("Choose a topic before starting matchmaking.");
       return;
@@ -157,57 +133,19 @@ export default function MatchmakingPage() {
         faculty: needsFaculty ? selectedFaculty : undefined,
         questionIds,
       });
-      // #region agent log
-      fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-        body: JSON.stringify({
-          sessionId: "86b558",
-          runId: "pre-fix",
-          hypothesisId: "H4",
-          location: "src/app/matchmaking/page.tsx:105",
-          message: "server matchmaking result snapshot",
-          data: {
-            joinedExisting: result.joinedExisting,
-            waitingCount: waitingDuels?.length ?? -1,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-
-      // #region agent log
-      fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-        body: JSON.stringify({
-          sessionId: "86b558",
-          runId: "pre-fix",
-          hypothesisId: "H4",
-          location: "src/app/matchmaking/page.tsx:160",
-          message: "findOrCreateDuelMatch resolved",
-          data: { matchId: String(result.matchId), joinedExisting: result.joinedExisting },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
+      debugLog("server matchmaking result snapshot", {
+        joinedExisting: result.joinedExisting,
+        waitingCount: waitingDuels?.length ?? -1,
+      });
+      debugLog("findOrCreateDuelMatch resolved", {
+        matchId: String(result.matchId),
+        joinedExisting: result.joinedExisting,
+      });
       router.replace(`/arena?matchId=${result.matchId}`);
     } catch (err) {
-      // #region agent log
-      fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-        body: JSON.stringify({
-          sessionId: "86b558",
-          runId: "pre-fix",
-          hypothesisId: "H1_H2_H3_H4",
-          location: "src/app/matchmaking/page.tsx:175",
-          message: "matchmaking flow threw error",
-          data: { errorMessage: err instanceof Error ? err.message : "unknown" },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
+      debugLog("matchmaking flow threw error", {
+        errorMessage: err instanceof Error ? err.message : "unknown",
+      });
       setError(err instanceof Error ? err.message : "Failed to start matchmaking.");
     } finally {
       setIsFindingMatch(false);

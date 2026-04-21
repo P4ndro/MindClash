@@ -120,6 +120,8 @@ export default defineSchema({
     category: v.string(),
     grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
     faculty: v.optional(v.string()),
+    questionType: v.optional(v.union(v.literal("open_ended"), v.literal("msq"))),
+    options: v.optional(v.array(v.string())),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -132,7 +134,7 @@ export default defineSchema({
 
   answers: defineTable({
     questionId: v.id("questions"),
-    correctValue: v.string(),
+    correctValue: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_questionId", ["questionId"]),
@@ -152,7 +154,7 @@ export default defineSchema({
     userId: v.id("users"),
     matchQuestionId: v.id("matchQuestions"),
     submittedAnswer: v.string(),
-    isCorrect: v.boolean(),
+    isCorrect: v.optional(v.boolean()),
     responseTime: v.number(),
     submittedAt: v.number(),
     createdAt: v.number(),

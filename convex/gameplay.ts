@@ -8,14 +8,14 @@ type UserId = Id<"users">;
 
 async function getCurrentUser(ctx: MutationCtx) {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error("Unauthorized");
+  if (!identity) throw new Error("unauthenticated: You must be signed in.");
 
   const user = await ctx.db
     .query("users")
     .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
     .unique();
 
-  if (!user) throw new Error("User not found");
+  if (!user) throw new Error("unknown_user: Signed-in user profile not found.");
   return user;
 }
 
@@ -26,7 +26,7 @@ async function assertParticipant(
 ) {
   if (match.mode === "duel") {
     const isPlayer = match.player1Id === userId || match.player2Id === userId;
-    if (!isPlayer) throw new Error("You are not a participant in this duel");
+    if (!isPlayer) throw new Error("forbidden_participant: You are not a participant in this duel");
     return;
   }
 
@@ -39,7 +39,7 @@ async function assertParticipant(
   const inTeam2 = Boolean(match.team2Id && teamIds.some((id) => id === match.team2Id));
 
   if (!inTeam1 && !inTeam2) {
-    throw new Error("You are not a participant in this team match");
+    throw new Error("forbidden_participant: You are not a participant in this team match");
   }
 }
 
@@ -123,7 +123,7 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
       matchQuestionId: mq._id.toString(),
       answers: answersForQuestion.map((a) => ({
         userId: a.userId.toString(),
-        isCorrect: a.isCorrect,
+          isCorrect: a.isCorrect === true,
       })),
     });
 
@@ -241,7 +241,7 @@ export const submitAnswer = mutation({
 
     const match = await ctx.db.get(args.matchId);
     if (!match) throw new Error("Match not found");
-    if (match.status !== "active") throw new Error("Match is not active");
+    if (match.status !== "active") throw new Error("stale_phase: Match is not active");
 
     await assertParticipant(ctx, match, currentUser._id);
 
@@ -251,10 +251,10 @@ export const submitAnswer = mutation({
       .unique();
     if (!state) throw new Error("Match state not found");
     if (state.phase !== "question") {
-      throw new Error("Answers can only be submitted during question phase");
+      throw new Error("stale_phase: Answers can only be submitted during question phase");
     }
-    if (state.questionEndsAt && now > state.questionEndsAt) {
-      throw new Error("Question deadline has passed");
+    if (state.questionEndsAt && now >= state.questionEndsAt) {
+      throw new Error("deadline_passed: Question deadline has passed");
     }
 
     const matchQuestion = await ctx.db.get(args.matchQuestionId);
@@ -273,22 +273,28 @@ export const submitAnswer = mutation({
       )
       .first();
     if (existingSubmission) {
-      throw new Error("Answer already submitted for this question");
+      throw new Error("duplicate_submit: Answer already submitted for this question");
     }
 
-    const answerDoc = await ctx.db
-      .query("answers")
-      .withIndex("by_questionId", (q) => q.eq("questionId", matchQuestion.questionId))
-      .unique();
-    if (!answerDoc) {
-      throw new Error("Answer key not found for question");
-    }
+    const questionDoc = await ctx.db.get(matchQuestion.questionId);
+    if (!questionDoc) throw new Error("Question not found");
+    const questionType = questionDoc.questionType ?? "open_ended";
 
     const submitted = args.submittedAnswer.trim();
     if (!submitted) {
-      throw new Error("submittedAnswer is required");
+      throw new Error("validation_error: submittedAnswer is required");
     }
-    const isCorrect = normalizeAnswer(submitted) === normalizeAnswer(answerDoc.correctValue);
+    let isCorrect: boolean | undefined = undefined;
+    if (questionType === "msq") {
+      const answerDoc = await ctx.db
+        .query("answers")
+        .withIndex("by_questionId", (q) => q.eq("questionId", matchQuestion.questionId))
+        .unique();
+      if (!answerDoc?.correctValue) {
+        throw new Error("Answer key not found for MSQ question");
+      }
+      isCorrect = normalizeAnswer(submitted) === normalizeAnswer(answerDoc.correctValue);
+    }
 
     const userAnswerId = await ctx.db.insert("userAnswers", {
       userId: currentUser._id,
@@ -330,7 +336,7 @@ export const advanceQuestion = mutation({
         alreadyFinished: true,
       };
     }
-    if (match.status !== "active") throw new Error("Only active matches can advance");
+    if (match.status !== "active") throw new Error("stale_phase: Only active matches can advance");
 
     await assertParticipant(ctx, match, currentUser._id);
 
@@ -368,7 +374,9 @@ export const advanceQuestion = mutation({
       .query("userAnswers")
       .withIndex("by_matchQuestionId", (q) => q.eq("matchQuestionId", currentLink._id))
       .collect();
-    const deadlinePassed = Boolean(state.questionEndsAt && now > state.questionEndsAt);
+    // Allow a small clock-skew buffer so clients at ~0.0s can still advance
+    // even if server time is a few hundred milliseconds behind.
+    const deadlinePassed = Boolean(state.questionEndsAt && now + 750 >= state.questionEndsAt);
 
     if (!deadlinePassed) {
       if (match.mode === "duel") {
@@ -379,9 +387,11 @@ export const advanceQuestion = mutation({
           match.player2Id && answersForCurrent.some((a) => a.userId === match.player2Id),
         );
         if (!hasPlayer1Answer || !hasPlayer2Answer) {
-          throw new Error(
-            "Cannot advance yet: waiting for both duel players to answer or timer expiry",
-          );
+          return {
+            hasNext: true,
+            nextQuestion: state.currentQuestion,
+            waitingForAnswers: true,
+          };
         }
       } else {
         const memberCache = new Map<string, Id<"teams">[]>();
@@ -410,9 +420,11 @@ export const advanceQuestion = mutation({
         }
 
         if (!team1Answered || !team2Answered) {
-          throw new Error(
-            "Cannot advance yet: waiting for both teams to answer or timer expiry",
-          );
+          return {
+            hasNext: true,
+            nextQuestion: state.currentQuestion,
+            waitingForAnswers: true,
+          };
         }
       }
     }
@@ -458,7 +470,7 @@ export const finishMatch = mutation({
       };
     }
     if (match.status !== "active") {
-      throw new Error("Only active matches can be finished");
+      throw new Error("stale_phase: Only active matches can be finished");
     }
 
     await assertParticipant(ctx, match, currentUser._id);
@@ -532,6 +544,8 @@ export const getCurrentQuestionForMatch = query({
         category: question.category,
         grade: question.grade,
         faculty: question.faculty,
+        questionType: question.questionType ?? "open_ended",
+        options: question.options ?? [],
       },
     };
   },

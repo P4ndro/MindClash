@@ -7,8 +7,10 @@ const seededCollegeQuestions: Array<{
   category: string;
   faculty: string;
   text: string;
-  correctValue: string;
+  correctValue?: string;
   difficulty: "easy" | "medium" | "hard";
+  questionType: "open_ended" | "msq";
+  options?: string[];
 }> = [
   {
     faculty: "Computer Science",
@@ -16,6 +18,8 @@ const seededCollegeQuestions: Array<{
     text: "Which SQL keyword is used to retrieve data from a table?",
     correctValue: "SELECT",
     difficulty: "easy",
+    questionType: "msq",
+    options: ["SELECT", "PICK", "GET", "FETCHROW"],
   },
   {
     faculty: "Computer Science",
@@ -23,13 +27,22 @@ const seededCollegeQuestions: Array<{
     text: "Which Java keyword is used to inherit from a class?",
     correctValue: "extends",
     difficulty: "easy",
+    questionType: "msq",
+    options: ["extends", "inherits", "implements", "super"],
   },
   {
     faculty: "Computer Science",
     category: "Theory of Computation",
     text: "What machine model is commonly used to define decidability?",
-    correctValue: "Turing machine",
     difficulty: "medium",
+    questionType: "open_ended",
+  },
+  {
+    faculty: "Computer Science",
+    category: "Theory of Computation",
+    text: "Name one closure property of regular languages.",
+    difficulty: "medium",
+    questionType: "open_ended",
   },
   {
     faculty: "Computer Science",
@@ -37,6 +50,8 @@ const seededCollegeQuestions: Array<{
     text: "What is the average time complexity of binary search on a sorted array?",
     correctValue: "O(log n)",
     difficulty: "medium",
+    questionType: "msq",
+    options: ["O(log n)", "O(n)", "O(n log n)", "O(1)"],
   },
   {
     faculty: "Computer Science",
@@ -44,6 +59,99 @@ const seededCollegeQuestions: Array<{
     text: "Which protocol is used for secure web traffic?",
     correctValue: "HTTPS",
     difficulty: "easy",
+    questionType: "msq",
+    options: ["HTTPS", "HTTP", "FTP", "SMTP"],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Databases",
+    text: "Which SQL clause is used to filter rows?",
+    correctValue: "WHERE",
+    difficulty: "easy",
+    questionType: "msq",
+    options: ["WHERE", "ORDER BY", "GROUP BY", "LIMIT"],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Databases",
+    text: "Which SQL operation combines rows from two tables based on related columns?",
+    correctValue: "JOIN",
+    difficulty: "medium",
+    questionType: "msq",
+    options: ["JOIN", "UNION", "MERGE", "COMBINE"],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Object-Oriented Programming (Java)",
+    text: "Which Java keyword prevents a class from being inherited?",
+    correctValue: "final",
+    difficulty: "medium",
+    questionType: "msq",
+    options: ["final", "static", "private", "sealed"],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Object-Oriented Programming (Java)",
+    text: "What is the entry-point method name in a Java application?",
+    correctValue: "main",
+    difficulty: "easy",
+    questionType: "msq",
+    options: ["main", "start", "run", "init"],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Theory of Computation",
+    text: "What does DFA stand for?",
+    correctValue: "Deterministic Finite Automaton",
+    difficulty: "medium",
+    questionType: "msq",
+    options: [
+      "Deterministic Finite Automaton",
+      "Dynamic Formal Algorithm",
+      "Directed Finite Analysis",
+      "Deterministic Functional Array",
+    ],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Theory of Computation",
+    text: "What is the common notation for the empty string?",
+    difficulty: "hard",
+    questionType: "open_ended",
+  },
+  {
+    faculty: "Computer Science",
+    category: "Data Structures and Algorithms",
+    text: "What data structure uses FIFO order?",
+    correctValue: "Queue",
+    difficulty: "easy",
+    questionType: "msq",
+    options: ["Queue", "Stack", "Heap", "Tree"],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Data Structures and Algorithms",
+    text: "What is the worst-case time complexity of linear search?",
+    correctValue: "O(n)",
+    difficulty: "easy",
+    questionType: "msq",
+    options: ["O(n)", "O(log n)", "O(1)", "O(n log n)"],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Computer Networks",
+    text: "Which layer of the OSI model is responsible for routing?",
+    correctValue: "Network layer",
+    difficulty: "medium",
+    questionType: "msq",
+    options: ["Network layer", "Application layer", "Session layer", "Physical layer"],
+  },
+  {
+    faculty: "Computer Science",
+    category: "Computer Networks",
+    text: "What does TCP stand for?",
+    difficulty: "medium",
+    questionType: "open_ended",
   },
   {
     faculty: "Management",
@@ -51,6 +159,8 @@ const seededCollegeQuestions: Array<{
     text: "Which management function includes setting objectives?",
     correctValue: "Planning",
     difficulty: "easy",
+    questionType: "msq",
+    options: ["Planning", "Controlling", "Staffing", "Leading"],
   },
   {
     faculty: "Management",
@@ -58,6 +168,8 @@ const seededCollegeQuestions: Array<{
     text: "What does the 'P' stand for in the 4Ps marketing mix besides Price, Place, and Promotion?",
     correctValue: "Product",
     difficulty: "easy",
+    questionType: "msq",
+    options: ["Product", "People", "Process", "Positioning"],
   },
   {
     faculty: "Management",
@@ -65,13 +177,63 @@ const seededCollegeQuestions: Array<{
     text: "Which statement reports a company's assets, liabilities, and equity?",
     correctValue: "Balance sheet",
     difficulty: "medium",
+    questionType: "msq",
+    options: ["Balance sheet", "Income statement", "Cash flow statement", "Equity statement"],
+  },
+  {
+    faculty: "Management",
+    category: "Principles of Management",
+    text: "Which management function focuses on evaluating performance?",
+    correctValue: "Controlling",
+    difficulty: "easy",
+    questionType: "msq",
+    options: ["Controlling", "Planning", "Organizing", "Leading"],
+  },
+  {
+    faculty: "Management",
+    category: "Principles of Management",
+    text: "Which leadership style typically involves shared decision-making?",
+    difficulty: "medium",
+    questionType: "open_ended",
+  },
+  {
+    faculty: "Management",
+    category: "Marketing Management",
+    text: "What does SWOT stand for in strategic analysis?",
+    difficulty: "medium",
+    questionType: "open_ended",
+  },
+  {
+    faculty: "Management",
+    category: "Marketing Management",
+    text: "Which pricing strategy sets a high initial price before lowering it over time?",
+    correctValue: "Price skimming",
+    difficulty: "hard",
+    questionType: "msq",
+    options: ["Price skimming", "Penetration pricing", "Bundle pricing", "Loss leader pricing"],
+  },
+  {
+    faculty: "Management",
+    category: "Financial Accounting",
+    text: "Which financial statement summarizes revenues and expenses over a period?",
+    correctValue: "Income statement",
+    difficulty: "easy",
+    questionType: "msq",
+    options: ["Income statement", "Balance sheet", "Trial balance", "General ledger"],
+  },
+  {
+    faculty: "Management",
+    category: "Financial Accounting",
+    text: "What accounting principle requires expenses to be recorded in the same period as related revenues?",
+    difficulty: "hard",
+    questionType: "open_ended",
   },
   {
     faculty: "Law",
     category: "Constitutional Law",
     text: "What is the primary purpose of a constitution?",
-    correctValue: "To define government powers and rights",
     difficulty: "medium",
+    questionType: "open_ended",
   },
   {
     faculty: "Law",
@@ -79,6 +241,8 @@ const seededCollegeQuestions: Array<{
     text: "In criminal law, what is the term for the guilty act?",
     correctValue: "Actus reus",
     difficulty: "hard",
+    questionType: "msq",
+    options: ["Actus reus", "Mens rea", "Habeas corpus", "Stare decisis"],
   },
   {
     faculty: "Law",
@@ -86,6 +250,56 @@ const seededCollegeQuestions: Array<{
     text: "Which regulation is a major EU framework for personal data protection?",
     correctValue: "GDPR",
     difficulty: "easy",
+    questionType: "msq",
+    options: ["GDPR", "HIPAA", "SOX", "COPPA"],
+  },
+  {
+    faculty: "Law",
+    category: "Constitutional Law",
+    text: "What principle means no one is above the law?",
+    correctValue: "Rule of law",
+    difficulty: "easy",
+    questionType: "msq",
+    options: ["Rule of law", "Judicial review", "Federalism", "Sovereignty"],
+  },
+  {
+    faculty: "Law",
+    category: "Constitutional Law",
+    text: "What term describes the division of power among branches of government?",
+    correctValue: "Separation of powers",
+    difficulty: "medium",
+    questionType: "msq",
+    options: ["Separation of powers", "Judicial activism", "Due process", "Natural justice"],
+  },
+  {
+    faculty: "Law",
+    category: "Criminal Law",
+    text: "What is the mental element of a crime commonly called?",
+    difficulty: "hard",
+    questionType: "open_ended",
+  },
+  {
+    faculty: "Law",
+    category: "Criminal Law",
+    text: "What is the standard burden of proof in criminal cases?",
+    difficulty: "medium",
+    questionType: "open_ended",
+  },
+  {
+    faculty: "Law",
+    category: "Data Protection and IT Law",
+    text: "Under GDPR, what does DPIA stand for?",
+    difficulty: "hard",
+    questionType: "open_ended",
+  },
+  {
+    faculty: "Law",
+    category: "Data Protection and IT Law",
+    text: "Which GDPR principle requires collecting only necessary personal data?",
+    correctValue: "Data minimization",
+    difficulty: "medium",
+    questionType: "msq",
+    options: ["Data minimization", "Storage inflation", "Purpose drift", "Data permanence"],
   },
 ];
 
@@ -96,18 +310,34 @@ export const createQuestion = mutation({
     category: v.string(),
     grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
     faculty: v.optional(v.string()),
-    correctValue: v.string(),
+    questionType: v.union(v.literal("open_ended"), v.literal("msq")),
+    options: v.optional(v.array(v.string())),
+    correctValue: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
 
     const text = args.text.trim();
     const category = args.category.trim();
-    const correctValue = args.correctValue.trim();
+    const correctValue = args.correctValue?.trim();
 
     if (!text) throw new Error("Question text is required");
     if (!category) throw new Error("Question category is required");
-    if (!correctValue) throw new Error("Correct answer is required");
+    if (args.questionType === "msq") {
+      if (!args.options || args.options.length < 2) {
+        throw new Error("MSQ questions require at least 2 options");
+      }
+      const normalizedOptions = args.options.map((option) => option.trim()).filter(Boolean);
+      if (normalizedOptions.length < 2) {
+        throw new Error("MSQ questions require at least 2 non-empty options");
+      }
+      if (!correctValue) {
+        throw new Error("MSQ questions require a correct answer");
+      }
+      if (!normalizedOptions.some((option) => option.toLowerCase() === correctValue.toLowerCase())) {
+        throw new Error("MSQ correct answer must exist in options");
+      }
+    }
 
     const now = Date.now();
     const questionId = await ctx.db.insert("questions", {
@@ -116,16 +346,20 @@ export const createQuestion = mutation({
       category,
       grade: args.grade,
       faculty: args.faculty?.trim() || undefined,
+      questionType: args.questionType,
+      options: args.questionType === "msq" ? args.options?.map((option) => option.trim()).filter(Boolean) : undefined,
       createdAt: now,
       updatedAt: now,
     });
 
-    await ctx.db.insert("answers", {
-      questionId,
-      correctValue,
-      createdAt: now,
-      updatedAt: now,
-    });
+    if (args.questionType === "msq") {
+      await ctx.db.insert("answers", {
+        questionId,
+        correctValue,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
 
     return questionId;
   },
@@ -150,16 +384,20 @@ export const seedCollegeFacultyQuestions = mutation({
         category: item.category,
         grade: "college",
         faculty: item.faculty,
+        questionType: item.questionType,
+        options: item.questionType === "msq" ? item.options : undefined,
         createdAt: now,
         updatedAt: now,
       });
 
-      await ctx.db.insert("answers", {
-        questionId,
-        correctValue: item.correctValue,
-        createdAt: now,
-        updatedAt: now,
-      });
+      if (item.questionType === "msq" && item.correctValue) {
+        await ctx.db.insert("answers", {
+          questionId,
+          correctValue: item.correctValue,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
 
       inserted.push(`${item.faculty} :: ${item.category}`);
     }
@@ -181,6 +419,9 @@ export const assignQuestionsToMatch = mutation({
 
     if (args.questionIds.length === 0) {
       throw new Error("At least one question is required");
+    }
+    if (args.questionIds.length > 10) {
+      throw new Error("At most 10 questions can be assigned to a match");
     }
 
     const match = await ctx.db.get(args.matchId);
@@ -279,7 +520,7 @@ export const getQuestionsForQuickPlay = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const limit = Math.max(1, Math.min(20, Math.floor(args.limit ?? 10)));
+    const limit = Math.max(1, Math.min(10, Math.floor(args.limit ?? 10)));
     const normalizedCategory = args.category?.trim();
     const normalizedFaculty = args.faculty?.trim();
 

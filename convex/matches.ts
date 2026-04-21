@@ -1,5 +1,44 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+
+const STALE_WAITING_MATCH_MS = 5 * 60 * 1000;
+
+async function cleanupStaleWaitingMatchesInternal(
+  ctx: MutationCtx,
+  args: {
+    mode: "duel" | "team";
+    topic?: string;
+    grade?: "middle" | "high" | "college";
+    faculty?: string;
+  },
+) {
+  const now = Date.now();
+  const waiting = await ctx.db
+    .query("matches")
+    .withIndex("by_status", (q) => q.eq("status", "waiting"))
+    .collect();
+
+  const normalizedTopic = args.topic?.trim();
+  const normalizedFaculty = args.faculty?.trim();
+  let cancelledCount = 0;
+
+  for (const match of waiting) {
+    if (match.mode !== args.mode) continue;
+    if (normalizedTopic && (match.topic ?? undefined) !== normalizedTopic) continue;
+    if (args.grade && (match.grade ?? undefined) !== args.grade) continue;
+    if (normalizedFaculty && (match.faculty ?? undefined) !== normalizedFaculty) continue;
+    if (now - match.createdAt <= STALE_WAITING_MATCH_MS) continue;
+
+    await ctx.db.patch(match._id, {
+      status: "cancelled",
+      endedAt: now,
+      updatedAt: now,
+    });
+    cancelledCount += 1;
+  }
+
+  return { cancelledCount };
+}
 
 export const createMatch = mutation({
   args: {
@@ -172,6 +211,16 @@ export const findOrCreateDuelMatch = mutation({
     if (args.questionIds.length === 0) {
       throw new Error("At least one question is required");
     }
+    if (args.questionIds.length > 10) {
+      throw new Error("validation_error: A match can have at most 10 questions");
+    }
+
+    await cleanupStaleWaitingMatchesInternal(ctx, {
+      mode: "duel",
+      topic: args.topic,
+      grade: args.grade,
+      faculty: args.faculty,
+    });
 
     const now = Date.now();
     const questionDurationMs = 30_000;
@@ -276,5 +325,17 @@ export const findOrCreateDuelMatch = mutation({
       matchId: newMatchId,
       joinedExisting: false,
     };
+  },
+});
+
+export const cleanupStaleWaitingMatches = mutation({
+  args: {
+    mode: v.union(v.literal("duel"), v.literal("team")),
+    topic: v.optional(v.string()),
+    grade: v.optional(v.union(v.literal("middle"), v.literal("high"), v.literal("college"))),
+    faculty: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    return await cleanupStaleWaitingMatchesInternal(ctx, args);
   },
 });

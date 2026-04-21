@@ -120,6 +120,9 @@ In practical terms: stable multiplayer first, then intelligence and product dept
 
 ## Local Development
 
+For teammate onboarding from GitHub, use the step-by-step guide:
+- `docs/INSTALLATION.md`
+
 ### 1) Install dependencies
 
 ```bash
