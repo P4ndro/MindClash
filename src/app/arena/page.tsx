@@ -116,6 +116,10 @@ function ArenaPageContent() {
     api.gameplay.getMatchResult,
     matchId && match?.status === "finished" ? { matchId } : "skip",
   );
+  const matchBreakdown = useQuery(
+    api.gameplay.getMatchBreakdown,
+    matchId && match?.status === "finished" ? { matchId } : "skip",
+  );
 
   const submitAnswer = useMutation(api.gameplay.submitAnswer);
   const advanceQuestion = useMutation(api.gameplay.advanceQuestion);
@@ -623,6 +627,61 @@ function ArenaPageContent() {
                   <p className="text-sm text-on-surface-variant">
                     Winner: {match.winnerUserId ? match.winnerUserId : "Tie"}
                   </p>
+                  <p className="text-xs text-on-surface-variant">
+                    Weighted points decide match winner (`easy=1`, `medium=2`, `hard=3`). Rating update is currently
+                    fixed at +16 / -16 / 0 (tie).
+                  </p>
+
+                  {matchBreakdown && matchBreakdown.length > 0 && (
+                    <div className="space-y-3 pt-4">
+                      <h3 className="text-sm font-black uppercase tracking-widest text-on-surface-variant">
+                        Round Breakdown
+                      </h3>
+                      <div className="space-y-2">
+                        {matchBreakdown.map((round) => (
+                          <div
+                            key={round.matchQuestionId}
+                            className="bg-surface-container-low border border-outline-variant/20 p-4"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-xs uppercase tracking-widest text-on-surface-variant">
+                                Q{round.order + 1} • {round.category} • {round.difficulty}
+                              </p>
+                              <p className="text-xs font-black text-primary">
+                                +{round.pointsEarned}/{round.weight} pts
+                              </p>
+                            </div>
+                            <p className="text-sm font-bold mt-1">{round.questionText}</p>
+                            <p className="text-xs text-on-surface-variant mt-2">
+                              Your answer: {round.submittedAnswer ?? "No submission"}
+                            </p>
+                            <p className="text-xs mt-1">
+                              Status:{" "}
+                              <span
+                                className={
+                                  round.gradingStatus === "correct"
+                                    ? "text-tertiary font-bold"
+                                    : round.gradingStatus === "incorrect"
+                                      ? "text-error font-bold"
+                                      : "text-on-surface-variant font-bold"
+                                }
+                              >
+                                {round.gradingStatus}
+                              </span>
+                              {round.questionType === "open_ended" && round.gradingStatus === "pending"
+                                ? " (awaiting grading)"
+                                : ""}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-on-surface-variant">
+                        Live duel currently uses auto-gradable MSQ questions only. Open-ended rounds are shown as
+                        pending until grading is implemented.
+                      </p>
+                    </div>
+                  )}
+
                   <Link href="/dashboard" className="inline-block text-primary font-bold">
                     Back to dashboard
                   </Link>

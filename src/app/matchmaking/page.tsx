@@ -119,7 +119,7 @@ export default function MatchmakingPage() {
       return;
     }
     if (!questionIds || questionIds.length === 0) {
-      setError("No questions exist for this topic and grade yet.");
+      setError("No auto-gradable MSQ questions exist for this queue yet.");
       return;
     }
 

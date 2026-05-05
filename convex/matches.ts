@@ -1,7 +1,22 @@
-import { mutation, query, MutationCtx } from "./_generated/server";
+import { mutation, query, MutationCtx, QueryCtx } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
+import { resolveCurrentUser } from "./auth";
 
 const STALE_WAITING_MATCH_MS = 5 * 60 * 1000;
+
+type MatchCtx = MutationCtx | QueryCtx;
+
+async function assertDuelParticipant(ctx: MatchCtx, matchId: Id<"matches">, userId: Id<"users">) {
+  const match = await ctx.db.get(matchId);
+  if (!match) throw new Error("Match not found");
+  if (match.mode !== "duel") return match;
+  const isPlayer = match.player1Id === userId || match.player2Id === userId;
+  if (!isPlayer) {
+    throw new Error("forbidden_participant: You are not a participant in this duel");
+  }
+  return match;
+}
 
 async function cleanupStaleWaitingMatchesInternal(
   ctx: MutationCtx,
@@ -168,9 +183,11 @@ export const joinMatch = mutation({
 export const getMatchById = query({
   args: { matchId: v.id("matches") },
   handler: async (ctx, args) => {
-    const match = await ctx.db.get(args.matchId);
-    if (!match) throw new Error("Match not found");
-    return match;
+    const resolved = await resolveCurrentUser(ctx);
+    if (!resolved?.user) {
+      throw new Error("unauthenticated: You must be signed in to view this match");
+    }
+    return await assertDuelParticipant(ctx, args.matchId, resolved.user._id);
   },
 });
 
@@ -208,6 +225,15 @@ export const findOrCreateDuelMatch = mutation({
     questionIds: v.array(v.id("questions")),
   },
   handler: async (ctx, args) => {
+    const resolved = await resolveCurrentUser(ctx);
+    if (!resolved?.user) {
+      throw new Error("unauthenticated: You must be signed in to start matchmaking");
+    }
+    const authenticatedPlayerId = resolved.user._id;
+    if (args.playerId !== authenticatedPlayerId) {
+      throw new Error("forbidden_participant: Matchmaking identity mismatch");
+    }
+
     if (args.questionIds.length === 0) {
       throw new Error("At least one question is required");
     }
@@ -222,6 +248,17 @@ export const findOrCreateDuelMatch = mutation({
       faculty: args.faculty,
     });
 
+    const questionDocs = await Promise.all(args.questionIds.map((questionId) => ctx.db.get(questionId)));
+    if (questionDocs.some((doc) => doc === null)) {
+      throw new Error("validation_error: One or more questionIds are invalid");
+    }
+    const hasOpenEnded = questionDocs.some(
+      (doc) => (doc?.questionType ?? "open_ended") === "open_ended",
+    );
+    if (hasOpenEnded) {
+      throw new Error("validation_error: Open-ended questions require grading and cannot be used in live duels yet");
+    }
+
     const now = Date.now();
     const questionDurationMs = 30_000;
     const normalizedTopic = args.topic?.trim() || undefined;
@@ -235,7 +272,7 @@ export const findOrCreateDuelMatch = mutation({
     const myWaiting = waiting
       .filter((match) => {
         if (match.mode !== "duel") return false;
-        if (match.player1Id !== args.playerId) return false;
+        if (match.player1Id !== authenticatedPlayerId) return false;
         if (match.player2Id) return false;
         if ((match.topic ?? undefined) !== normalizedTopic) return false;
         if ((match.grade ?? undefined) !== (args.grade ?? undefined)) return false;
@@ -254,7 +291,7 @@ export const findOrCreateDuelMatch = mutation({
     const joinable = waiting
       .filter((match) => {
         if (match.mode !== "duel") return false;
-        if (!match.player1Id || match.player1Id === args.playerId) return false;
+        if (!match.player1Id || match.player1Id === authenticatedPlayerId) return false;
         if (match.player2Id) return false;
         if ((match.topic ?? undefined) !== normalizedTopic) return false;
         if ((match.grade ?? undefined) !== (args.grade ?? undefined)) return false;
@@ -265,7 +302,7 @@ export const findOrCreateDuelMatch = mutation({
 
     if (joinable) {
       await ctx.db.patch(joinable._id, {
-        player2Id: args.playerId,
+        player2Id: authenticatedPlayerId,
         status: "active",
         startedAt: now,
         updatedAt: now,
@@ -299,7 +336,7 @@ export const findOrCreateDuelMatch = mutation({
       topic: normalizedTopic,
       grade: args.grade,
       faculty: normalizedFaculty,
-      player1Id: args.playerId,
+      player1Id: authenticatedPlayerId,
       player2Id: undefined,
       team1Id: undefined,
       team2Id: undefined,

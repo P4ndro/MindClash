@@ -523,6 +523,8 @@ export const getQuestionsForQuickPlay = query({
     const limit = Math.max(1, Math.min(10, Math.floor(args.limit ?? 10)));
     const normalizedCategory = args.category?.trim();
     const normalizedFaculty = args.faculty?.trim();
+    const isAutoGradable = (questionType?: "open_ended" | "msq") =>
+      (questionType ?? "open_ended") === "msq";
 
     if (normalizedCategory && args.grade) {
       const questions = await ctx.db
@@ -534,7 +536,7 @@ export const getQuestionsForQuickPlay = query({
       const filtered = normalizedFaculty
         ? questions.filter((question) => (question.faculty ?? "") === normalizedFaculty)
         : questions;
-      return filtered.slice(0, limit).map((question) => question._id);
+      return filtered.filter((question) => isAutoGradable(question.questionType)).slice(0, limit).map((question) => question._id);
     }
 
     if (normalizedCategory) {
@@ -542,11 +544,11 @@ export const getQuestionsForQuickPlay = query({
         .query("questions")
         .withIndex("by_category", (q) => q.eq("category", normalizedCategory))
         .take(limit);
-      return questions.map((question) => question._id);
+      return questions.filter((question) => isAutoGradable(question.questionType)).map((question) => question._id);
     }
 
     const questions = await ctx.db.query("questions").withIndex("by_createdAt").order("desc").take(limit);
-    return questions.map((question) => question._id);
+    return questions.filter((question) => isAutoGradable(question.questionType)).map((question) => question._id);
   },
 });
 

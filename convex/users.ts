@@ -9,30 +9,12 @@ export const syncUser = mutation({
     email: v.string(),
   },
   handler: async (ctx, args) => {
-    // #region agent log
-    fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-      body: JSON.stringify({
-        sessionId: "86b558",
-        runId: "pre-fix",
-        hypothesisId: "H1",
-        location: "convex/users.ts:11",
-        message: "syncUser mutation called",
-        data: { clerkId: args.clerkId, hasEmail: Boolean(args.email), hasUsername: Boolean(args.username) },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     const existing = await ctx.db
       .query("users")
       .withIndex("by_clerkId", (q) => q.eq("clerkId", args.clerkId))
       .unique();
 
     if (existing) {
-      // #region agent log
-      console.log("[DBG 86b558][H1] syncUser existing", { userId: existing._id });
-      // #endregion
       if (
         existing.username !== args.username ||
         existing.email !== args.email
@@ -42,9 +24,6 @@ export const syncUser = mutation({
           email: args.email,
           updatedAt: Date.now(),
         });
-        // #region agent log
-        console.log("[DBG 86b558][H1] syncUser patched", { userId: existing._id });
-        // #endregion
       }
       return existing._id;
     }
@@ -57,9 +36,6 @@ export const syncUser = mutation({
       updatedAt: Date.now(),
       createdAt: Date.now(),
     });
-    // #region agent log
-    console.log("[DBG 86b558][H1] syncUser created", { userId: inserted });
-    // #endregion
     return inserted;
   },
 });
@@ -87,25 +63,7 @@ export const getUser = query({
 export const getUserOptional = query({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    // #region agent log
-    fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-      body: JSON.stringify({
-        sessionId: "86b558",
-        runId: "pre-fix",
-        hypothesisId: "H2_H3_H4",
-        location: "convex/users.ts:84",
-        message: "getUserOptional auth check",
-        data: { hasIdentity: Boolean(identity), subject: identity?.subject ?? null },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (!identity) {
-      // #region agent log
-      console.log("[DBG 86b558][H3] getUserOptional no identity");
-      // #endregion
       return null;
     }
 
@@ -113,30 +71,6 @@ export const getUserOptional = query({
       .query("users")
       .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
       .unique();
-
-    // #region agent log
-    fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-      body: JSON.stringify({
-        sessionId: "86b558",
-        runId: "pre-fix",
-        hypothesisId: "H2_H3_H4",
-        location: "convex/users.ts:102",
-        message: "getUserOptional resolved user",
-        data: { foundUser: Boolean(user), userId: user?._id ?? null },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-
-    if (!user) {
-      // #region agent log
-      console.log("[DBG 86b558][H2_H4] getUserOptional missing user for identity", {
-        subject: identity.subject,
-      });
-      // #endregion
-    }
 
     return user ?? null;
   },
@@ -245,21 +179,6 @@ export const setUserRole = mutation({
 export const getMyCourseRatings = query({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    // #region agent log
-    fetch("http://127.0.0.1:7941/ingest/31c264ca-5f6d-41fb-b78a-4754c57b0a02", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "86b558" },
-      body: JSON.stringify({
-        sessionId: "86b558",
-        runId: "pre-fix",
-        hypothesisId: "H5",
-        location: "convex/users.ts:100",
-        message: "getMyCourseRatings auth check",
-        data: { hasIdentity: Boolean(identity) },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (!identity) {
       return [];
     }

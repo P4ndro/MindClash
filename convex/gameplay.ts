@@ -1,10 +1,11 @@
-import { mutation, query, MutationCtx } from "./_generated/server";
+import { mutation, query, MutationCtx, QueryCtx } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { computeMatchScores, QuestionAnswers } from "./gameplayScoring";
 
 type MatchDoc = Doc<"matches">;
 type UserId = Id<"users">;
+type GameplayCtx = MutationCtx | QueryCtx;
 
 async function getCurrentUser(ctx: MutationCtx) {
   const identity = await ctx.auth.getUserIdentity();
@@ -20,7 +21,7 @@ async function getCurrentUser(ctx: MutationCtx) {
 }
 
 async function assertParticipant(
-  ctx: MutationCtx,
+  ctx: GameplayCtx,
   match: MatchDoc,
   userId: UserId,
 ) {
@@ -41,6 +42,18 @@ async function assertParticipant(
   if (!inTeam1 && !inTeam2) {
     throw new Error("forbidden_participant: You are not a participant in this team match");
   }
+}
+
+async function requireCurrentQueryUser(ctx: QueryCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("unauthenticated: You must be signed in.");
+
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
+    .unique();
+  if (!user) throw new Error("unknown_user: Signed-in user profile not found.");
+  return user;
 }
 
 function normalizeAnswer(value: string) {
@@ -492,8 +505,10 @@ export const getMatchResult = query({
     matchId: v.id("matches"),
   },
   handler: async (ctx, args) => {
+    const user = await requireCurrentQueryUser(ctx);
     const match = await ctx.db.get(args.matchId);
     if (!match) throw new Error("Match not found");
+    await assertParticipant(ctx, match, user._id);
 
     const result = await ctx.db
       .query("matchResults")
@@ -504,11 +519,73 @@ export const getMatchResult = query({
   },
 });
 
+export const getMatchBreakdown = query({
+  args: {
+    matchId: v.id("matches"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireCurrentQueryUser(ctx);
+    const match = await ctx.db.get(args.matchId);
+    if (!match) throw new Error("Match not found");
+    await assertParticipant(ctx, match, user._id);
+
+    const links = await ctx.db
+      .query("matchQuestions")
+      .withIndex("by_match_order", (q) => q.eq("matchId", args.matchId))
+      .collect();
+
+    const rounds = await Promise.all(
+      links.map(async (link) => {
+        const question = await ctx.db.get(link.questionId);
+        if (!question) return null;
+
+        const myAnswer = await ctx.db
+          .query("userAnswers")
+          .withIndex("by_user_matchQuestion", (q) =>
+            q.eq("userId", user._id).eq("matchQuestionId", link._id),
+          )
+          .first();
+
+        const weight = getDifficultyWeight(question.difficulty);
+        const gradingStatus =
+          myAnswer?.isCorrect === true
+            ? "correct"
+            : myAnswer?.isCorrect === false
+              ? "incorrect"
+              : myAnswer
+                ? "pending"
+                : "unanswered";
+        const pointsEarned = myAnswer?.isCorrect === true ? weight : 0;
+
+        return {
+          matchQuestionId: link._id,
+          order: link.order,
+          questionText: question.text,
+          category: question.category,
+          difficulty: question.difficulty,
+          questionType: question.questionType ?? "open_ended",
+          submittedAnswer: myAnswer?.submittedAnswer ?? null,
+          gradingStatus,
+          weight,
+          pointsEarned,
+        };
+      }),
+    );
+
+    return rounds.filter((round) => round !== null);
+  },
+});
+
 export const getMatchState = query({
   args: {
     matchId: v.id("matches"),
   },
   handler: async (ctx, args) => {
+    const user = await requireCurrentQueryUser(ctx);
+    const match = await ctx.db.get(args.matchId);
+    if (!match) throw new Error("Match not found");
+    await assertParticipant(ctx, match, user._id);
+
     const state = await ctx.db
       .query("matchState")
       .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
@@ -523,8 +600,10 @@ export const getCurrentQuestionForMatch = query({
     matchId: v.id("matches"),
   },
   handler: async (ctx, args) => {
+    const user = await requireCurrentQueryUser(ctx);
     const match = await ctx.db.get(args.matchId);
     if (!match) throw new Error("Match not found");
+    await assertParticipant(ctx, match, user._id);
 
     const state = await ctx.db
       .query("matchState")
@@ -624,6 +703,11 @@ export const getAnswersCountForCurrentQuestion = query({
     matchId: v.id("matches"),
   },
   handler: async (ctx, args) => {
+    const user = await requireCurrentQueryUser(ctx);
+    const match = await ctx.db.get(args.matchId);
+    if (!match) throw new Error("Match not found");
+    await assertParticipant(ctx, match, user._id);
+
     const state = await ctx.db
       .query("matchState")
       .withIndex("by_matchId", (q) => q.eq("matchId", args.matchId))
