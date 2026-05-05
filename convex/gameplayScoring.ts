@@ -27,6 +27,7 @@ export type AnswerRecord = {
 
 export type QuestionAnswers = {
   matchQuestionId: string;
+  weight?: number;
   answers: AnswerRecord[];
 };
 
@@ -53,12 +54,13 @@ function scoreQuestionForDuel(
   player1Id: string | undefined,
   player2Id: string | undefined,
 ): { p1: number; p2: number } {
+  const weight = Math.max(1, question.weight ?? 1);
   let p1 = 0;
   let p2 = 0;
   for (const answer of question.answers) {
     if (!answer.isCorrect) continue;
-    if (player1Id && answer.userId === player1Id) p1 += 1;
-    if (player2Id && answer.userId === player2Id) p2 += 1;
+    if (player1Id && answer.userId === player1Id) p1 += weight;
+    if (player2Id && answer.userId === player2Id) p2 += weight;
   }
   return { p1, p2 };
 }
@@ -69,6 +71,7 @@ function scoreQuestionForTeams(
   team2Id: string | undefined,
   userTeamMembership: Record<string, string[] | undefined>,
 ): { t1: number; t2: number } {
+  const weight = Math.max(1, question.weight ?? 1);
   let team1Scored = false;
   let team2Scored = false;
 
@@ -85,8 +88,8 @@ function scoreQuestionForTeams(
   }
 
   return {
-    t1: team1Scored ? 1 : 0,
-    t2: team2Scored ? 1 : 0,
+    t1: team1Scored ? weight : 0,
+    t2: team2Scored ? weight : 0,
   };
 }
 

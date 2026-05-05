@@ -33,6 +33,12 @@ function parseServerError(error: unknown): ParsedServerError {
   return { code, message: message || raw };
 }
 
+function getDifficultyWeight(difficulty: "easy" | "medium" | "hard") {
+  if (difficulty === "hard") return 3;
+  if (difficulty === "medium") return 2;
+  return 1;
+}
+
 const AUTH_SYNC_ERROR_CODES = new Set(["unauthenticated", "unknown_user"]);
 
 function sleep(ms: number) {
@@ -142,6 +148,7 @@ function ArenaPageContent() {
     (answersCount?.count ?? 0) < 2 &&
     remainingMs > 0;
   const isCurrentQuestionMsq = currentQuestion?.question.questionType === "msq";
+  const currentQuestionPoints = currentQuestion ? getDifficultyWeight(currentQuestion.question.difficulty) : 1;
 
   async function handleSubmitAnswer() {
     if (!isArenaAuthReady) {
@@ -465,6 +472,10 @@ function ArenaPageContent() {
                         <div className="text-xs uppercase tracking-widest text-on-surface-variant">
                           Question {currentQuestion.order + 1} • {currentQuestion.question.category}
                           {currentQuestion.question.faculty ? ` • ${currentQuestion.question.faculty}` : ""}
+                        </div>
+                        <div className="inline-flex items-center gap-2 px-3 py-1 bg-surface-container-highest text-[10px] font-black uppercase tracking-[0.15em] text-primary">
+                          <span className="material-symbols-outlined text-sm">military_tech</span>
+                          Worth {currentQuestionPoints} point{currentQuestionPoints > 1 ? "s" : ""}
                         </div>
                         <h2 className="text-3xl font-black tracking-tight leading-tight">
                           {currentQuestion.question.text}

@@ -8,8 +8,9 @@ import {
 function question(
   id: string,
   answers: Array<{ userId: string; isCorrect: boolean }>,
+  weight = 1,
 ): QuestionAnswers {
-  return { matchQuestionId: id, answers };
+  return { matchQuestionId: id, answers, weight };
 }
 
 describe("computeMatchScores - duel mode", () => {
@@ -20,22 +21,22 @@ describe("computeMatchScores - duel mode", () => {
     questions: qs,
   });
 
-  it("counts one point per correct answer per player", () => {
+  it("applies question weights per correct answer per player", () => {
     const result = computeMatchScores(
       baseInput([
         question("q1", [
           { userId: "p1", isCorrect: true },
           { userId: "p2", isCorrect: false },
-        ]),
+        ], 1),
         question("q2", [
           { userId: "p1", isCorrect: true },
           { userId: "p2", isCorrect: true },
-        ]),
+        ], 3),
       ]),
     );
 
-    expect(result.player1Score).toBe(2);
-    expect(result.player2Score).toBe(1);
+    expect(result.player1Score).toBe(4);
+    expect(result.player2Score).toBe(3);
     expect(result.winnerUserId).toBe("p1");
   });
 
@@ -97,7 +98,7 @@ describe("computeMatchScores - team mode (Option A: one point per team per quest
     userTeamMembership: membership,
   });
 
-  it("awards one point per team per question even when multiple members answer correctly", () => {
+  it("awards one weighted point bundle per team per question even with duplicate correct members", () => {
     const result = computeMatchScores(
       teamMatchInput(
         [
@@ -105,7 +106,7 @@ describe("computeMatchScores - team mode (Option A: one point per team per quest
             { userId: "t1_memberA", isCorrect: true },
             { userId: "t1_memberB", isCorrect: true },
             { userId: "t2_memberA", isCorrect: true },
-          ]),
+          ], 2),
         ],
         {
           t1_memberA: ["t1"],
@@ -115,9 +116,9 @@ describe("computeMatchScores - team mode (Option A: one point per team per quest
       ),
     );
 
-    // Option A: each team scores at most 1 per question regardless of duplicates.
-    expect(result.player1Score).toBe(1);
-    expect(result.player2Score).toBe(1);
+    // Option A: each team scores at most question weight per question regardless of duplicates.
+    expect(result.player1Score).toBe(2);
+    expect(result.player2Score).toBe(2);
     expect(result.winnerUserId).toBeUndefined();
   });
 
@@ -205,6 +206,24 @@ describe("computeMatchScores - team mode (Option A: one point per team per quest
 
     expect(result.player1Score).toBe(1); // only q1 from team1
     expect(result.player2Score).toBe(1); // only q2 from team2
+  });
+
+  it("uses weighted scores across multiple team questions", () => {
+    const result = computeMatchScores(
+      teamMatchInput(
+        [
+          question("q1", [{ userId: "a", isCorrect: true }], 1),
+          question("q2", [{ userId: "c", isCorrect: true }], 3),
+        ],
+        {
+          a: ["t1"],
+          c: ["t2"],
+        },
+      ),
+    );
+
+    expect(result.player1Score).toBe(1);
+    expect(result.player2Score).toBe(3);
   });
 
   it("never sets a duel winnerUserId in team mode", () => {

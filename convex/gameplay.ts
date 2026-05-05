@@ -47,6 +47,12 @@ function normalizeAnswer(value: string) {
   return value.trim().toLowerCase();
 }
 
+function getDifficultyWeight(difficulty: "easy" | "medium" | "hard") {
+  if (difficulty === "hard") return 3;
+  if (difficulty === "medium") return 2;
+  return 1;
+}
+
 async function getOrCreateCourseRating(
   ctx: MutationCtx,
   userId: Id<"users">,
@@ -114,6 +120,8 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
   const scoringQuestions: QuestionAnswers[] = [];
 
   for (const mq of matchQuestions) {
+    const questionDoc = await ctx.db.get(mq.questionId);
+    const weight = questionDoc ? getDifficultyWeight(questionDoc.difficulty) : 1;
     const answersForQuestion = await ctx.db
       .query("userAnswers")
       .withIndex("by_matchQuestionId", (q) => q.eq("matchQuestionId", mq._id))
@@ -121,9 +129,10 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
 
     scoringQuestions.push({
       matchQuestionId: mq._id.toString(),
+      weight,
       answers: answersForQuestion.map((a) => ({
         userId: a.userId.toString(),
-          isCorrect: a.isCorrect === true,
+        isCorrect: a.isCorrect === true,
       })),
     });
 

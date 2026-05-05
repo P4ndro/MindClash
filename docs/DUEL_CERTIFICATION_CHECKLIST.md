@@ -74,10 +74,10 @@ Duel certification:
 - [X] Same queue -> same matchId
 - [X] Timeout auto-advance
 - [X] Duplicate submit blocked
-- [ ] Non-participant blocked (needs final debug hardening)
+- [X] Non-participant blocked
 - [X] Final result consistent (incl. tie)
 Date: 2026-04-17
 Tester(s): sandr
 Build/commit: working tree (uncommitted)
-Notes: Item 4 works partially but requires deterministic non-participant UX before final sign-off.
+Notes: Full 5/5 certification pass completed.
 ```
