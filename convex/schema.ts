@@ -155,6 +155,13 @@ export default defineSchema({
     matchQuestionId: v.id("matchQuestions"),
     submittedAnswer: v.string(),
     isCorrect: v.optional(v.boolean()),
+    gradingStatus: v.optional(
+      v.union(v.literal("pending"), v.literal("graded"), v.literal("review_required")),
+    ),
+    aiScore: v.optional(v.number()),
+    aiConfidence: v.optional(v.number()),
+    gradingReason: v.optional(v.string()),
+    aiModel: v.optional(v.string()),
     responseTime: v.number(),
     submittedAt: v.number(),
     createdAt: v.number(),

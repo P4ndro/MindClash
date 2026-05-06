@@ -97,28 +97,23 @@ function ArenaPageContent() {
   const [nowMs, setNowMs] = useState(Date.now());
   const [questionLocalStartMs, setQuestionLocalStartMs] = useState<number | null>(null);
   const autoAdvancedQuestionRef = useRef<string | null>(null);
+  const isArenaAuthReady =
+    isClerkLoaded && Boolean(isSignedIn) && !isConvexAuthLoading && Boolean(isConvexAuthenticated);
+  const protectedQueryArgs = matchId && isArenaAuthReady ? { matchId } : "skip";
 
-  const match = useQuery(api.matches.getMatchById, matchId ? { matchId } : "skip");
-  const matchState = useQuery(api.gameplay.getMatchState, matchId ? { matchId } : "skip");
-  const currentQuestion = useQuery(
-    api.gameplay.getCurrentQuestionForMatch,
-    matchId ? { matchId } : "skip",
-  );
-  const myAnswer = useQuery(
-    api.gameplay.getMyAnswerForCurrentQuestion,
-    matchId ? { matchId } : "skip",
-  );
-  const answersCount = useQuery(
-    api.gameplay.getAnswersCountForCurrentQuestion,
-    matchId ? { matchId } : "skip",
-  );
+  const currentUserProfile = useQuery(api.users.getUserOptional, isArenaAuthReady ? {} : "skip");
+  const match = useQuery(api.matches.getMatchById, protectedQueryArgs);
+  const matchState = useQuery(api.gameplay.getMatchState, protectedQueryArgs);
+  const currentQuestion = useQuery(api.gameplay.getCurrentQuestionForMatch, protectedQueryArgs);
+  const myAnswer = useQuery(api.gameplay.getMyAnswerForCurrentQuestion, protectedQueryArgs);
+  const answersCount = useQuery(api.gameplay.getAnswersCountForCurrentQuestion, protectedQueryArgs);
   const matchResult = useQuery(
     api.gameplay.getMatchResult,
-    matchId && match?.status === "finished" ? { matchId } : "skip",
+    matchId && isArenaAuthReady && match?.status === "finished" ? { matchId } : "skip",
   );
   const matchBreakdown = useQuery(
     api.gameplay.getMatchBreakdown,
-    matchId && match?.status === "finished" ? { matchId } : "skip",
+    matchId && isArenaAuthReady && match?.status === "finished" ? { matchId } : "skip",
   );
 
   const submitAnswer = useMutation(api.gameplay.submitAnswer);
@@ -145,14 +140,23 @@ function ArenaPageContent() {
   const timerProgress = Math.max(0, Math.min(100, (remainingMs / totalForProgress) * 100));
   const timerSeconds = (remainingMs / 1000).toFixed(1);
   const hasAnswered = myAnswer?.hasAnswered === true;
-  const isArenaAuthReady =
-    isClerkLoaded && Boolean(isSignedIn) && !isConvexAuthLoading && Boolean(isConvexAuthenticated);
   const waitingForOpponentInDuel =
     Boolean(match && match.mode === "duel" && match.status === "active" && hasAnswered) &&
     (answersCount?.count ?? 0) < 2 &&
     remainingMs > 0;
   const isCurrentQuestionMsq = currentQuestion?.question.questionType === "msq";
   const currentQuestionPoints = currentQuestion ? getDifficultyWeight(currentQuestion.question.difficulty) : 1;
+  const isCurrentUserPlayer2 = Boolean(
+    currentUserProfile?._id && match?.player2Id && currentUserProfile._id === match.player2Id,
+  );
+  const yourFinalScore = isCurrentUserPlayer2
+    ? (matchResult?.result?.player2Score ?? 0)
+    : (matchResult?.result?.player1Score ?? 0);
+  const opponentFinalScore = isCurrentUserPlayer2
+    ? (matchResult?.result?.player1Score ?? 0)
+    : (matchResult?.result?.player2Score ?? 0);
+  const winnerLabel =
+    !match?.winnerUserId ? "Tie" : currentUserProfile?._id && match.winnerUserId === currentUserProfile._id ? "You" : "Opponent";
 
   async function handleSubmitAnswer() {
     if (!isArenaAuthReady) {
@@ -245,6 +249,7 @@ function ArenaPageContent() {
 
   useEffect(() => {
     if (!matchId || !match || match.status !== "active" || match.mode !== "duel") return;
+    if (matchState?.phase !== "question") return;
     if (!currentQuestion?.matchQuestionId) return;
     if (!isArenaAuthReady || isAdvancing) return;
     if ((answersCount?.count ?? 0) < 2) return;
@@ -255,6 +260,7 @@ function ArenaPageContent() {
   }, [
     matchId,
     match,
+    matchState?.phase,
     currentQuestion?.matchQuestionId,
     answersCount?.count,
     isArenaAuthReady,
@@ -264,6 +270,7 @@ function ArenaPageContent() {
 
   useEffect(() => {
     if (!matchId || !match || match.status !== "active" || match.mode !== "duel") return;
+    if (matchState?.phase !== "question") return;
     if (!currentQuestion?.matchQuestionId) return;
     if (!isArenaAuthReady || isAdvancing) return;
     if (remainingMs > 0) return;
@@ -274,6 +281,7 @@ function ArenaPageContent() {
   }, [
     matchId,
     match,
+    matchState?.phase,
     currentQuestion?.matchQuestionId,
     remainingMs,
     nowMs,
@@ -400,7 +408,17 @@ function ArenaPageContent() {
                 </div>
               )}
 
-              {match.status === "active" && currentQuestion && (
+              {match.status === "active" && matchState?.phase === "review" && (
+                <div className="w-full max-w-6xl glass-panel p-10 text-center space-y-3">
+                  <h2 className="text-2xl font-black tracking-tight">AI Grading In Progress</h2>
+                  <p className="text-sm text-on-surface-variant">
+                    Open-ended answers are being graded. Match details are hidden until grading is complete.
+                  </p>
+                  <p className="text-xs text-on-surface-variant">Please wait. This page updates automatically.</p>
+                </div>
+              )}
+
+              {match.status === "active" && matchState?.phase !== "review" && currentQuestion && (
                 <div className="w-full max-w-6xl grid grid-cols-12 gap-8 items-start">
                   <div className="col-span-12 lg:col-span-3 space-y-6">
                     <div className="bg-surface-container-low p-6 border-l-2 border-primary">
@@ -588,13 +606,13 @@ function ArenaPageContent() {
                       <div className="flex justify-between items-end">
                         <div className="text-left">
                           <p className="text-3xl font-black tracking-tighter text-on-surface">
-                            {matchResult?.result?.player1Score ?? 0}
+                            {yourFinalScore}
                           </p>
                           <p className="text-[10px] font-bold uppercase text-on-surface-variant">Your Score</p>
                         </div>
                         <div className="text-right">
                           <p className="text-3xl font-black tracking-tighter text-tertiary">
-                            {matchResult?.result?.player2Score ?? 0}
+                            {opponentFinalScore}
                           </p>
                           <p className="text-[10px] font-bold uppercase text-on-surface-variant">Opp Score</p>
                         </div>
@@ -610,7 +628,7 @@ function ArenaPageContent() {
                 </div>
               )}
 
-              {match.status === "active" && !currentQuestion && (
+              {match.status === "active" && matchState?.phase !== "review" && !currentQuestion && (
                 <div className="bg-surface-container-low border border-outline-variant/20 p-6">
                   <p className="text-sm text-on-surface-variant">
                     Active match has no current question yet. Ensure questions are assigned.
@@ -622,10 +640,10 @@ function ArenaPageContent() {
                 <div className="w-full max-w-6xl glass-panel p-8 space-y-4">
                   <h2 className="text-2xl font-black tracking-tight">Match Finished</h2>
                   <p className="text-sm text-on-surface-variant">
-                    Final score: {matchResult?.result?.player1Score ?? 0} - {matchResult?.result?.player2Score ?? 0}
+                    Final score: {yourFinalScore} - {opponentFinalScore}
                   </p>
                   <p className="text-sm text-on-surface-variant">
-                    Winner: {match.winnerUserId ? match.winnerUserId : "Tie"}
+                    Winner: {winnerLabel}
                   </p>
                   <p className="text-xs text-on-surface-variant">
                     Weighted points decide match winner (`easy=1`, `medium=2`, `hard=3`). Rating update is currently
@@ -663,21 +681,29 @@ function ArenaPageContent() {
                                     ? "text-tertiary font-bold"
                                     : round.gradingStatus === "incorrect"
                                       ? "text-error font-bold"
-                                      : "text-on-surface-variant font-bold"
+                                      : round.gradingStatus === "pending" ||
+                                          round.gradingStatus === "review_required"
+                                        ? "text-primary font-bold"
+                                        : "text-on-surface-variant font-bold"
                                 }
                               >
-                                {round.gradingStatus}
+                                {round.gradingStatus === "pending"
+                                  ? "ai_grading"
+                                  : round.gradingStatus === "review_required"
+                                    ? "ai_grading_delayed"
+                                    : round.gradingStatus}
                               </span>
-                              {round.questionType === "open_ended" && round.gradingStatus === "pending"
-                                ? " (awaiting grading)"
+                              {round.questionType === "open_ended" &&
+                              (round.gradingStatus === "pending" || round.gradingStatus === "review_required")
+                                ? " (AI will finalize this shortly)"
                                 : ""}
                             </p>
                           </div>
                         ))}
                       </div>
                       <p className="text-xs text-on-surface-variant">
-                        Live duel currently uses auto-gradable MSQ questions only. Open-ended rounds are shown as
-                        pending until grading is implemented.
+                        Open-ended answers are graded asynchronously by AI after submission. If the provider is busy,
+                        the round may show AI grading delayed and update shortly after.
                       </p>
                     </div>
                   )}

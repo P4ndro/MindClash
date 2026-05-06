@@ -185,7 +185,7 @@ export const getMatchById = query({
   handler: async (ctx, args) => {
     const resolved = await resolveCurrentUser(ctx);
     if (!resolved?.user) {
-      throw new Error("unauthenticated: You must be signed in to view this match");
+      return null;
     }
     return await assertDuelParticipant(ctx, args.matchId, resolved.user._id);
   },
@@ -251,12 +251,6 @@ export const findOrCreateDuelMatch = mutation({
     const questionDocs = await Promise.all(args.questionIds.map((questionId) => ctx.db.get(questionId)));
     if (questionDocs.some((doc) => doc === null)) {
       throw new Error("validation_error: One or more questionIds are invalid");
-    }
-    const hasOpenEnded = questionDocs.some(
-      (doc) => (doc?.questionType ?? "open_ended") === "open_ended",
-    );
-    if (hasOpenEnded) {
-      throw new Error("validation_error: Open-ended questions require grading and cannot be used in live duels yet");
     }
 
     const now = Date.now();

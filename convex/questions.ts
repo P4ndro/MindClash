@@ -1,8 +1,209 @@
-import { mutation, query } from "./_generated/server";
+import { api, internal } from "./_generated/api";
+import { action, internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { requireAdmin } from "./auth";
 
 const collegeFaculties = ["Management", "Computer Science", "Law"];
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const GEMINI_FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? "gemini-2.0-flash")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
+const DEFAULT_AI_DUEL_QUESTION_COUNT = 5;
+const GEMINI_MAX_ATTEMPTS = 3;
+const GEMINI_RETRY_BASE_MS = 700;
+
+type AiGeneratedQuestion = {
+  text: string;
+  difficulty: "easy" | "medium" | "hard";
+  category: string;
+  questionType: "open_ended" | "msq";
+  options?: string[];
+  correctValue?: string;
+};
+
+function shouldRetryGeminiStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 503 || status === 504;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getModelCandidates(): string[] {
+  return Array.from(new Set([GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]));
+}
+
+async function generateQuestionsWithGemini(params: {
+  topic: string;
+  grade: "middle" | "high" | "college";
+  faculty?: string;
+  rating: number;
+  count: number;
+  recentQuestionTexts: string[];
+}): Promise<AiGeneratedQuestion[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("ai_unavailable: GEMINI_API_KEY is missing");
+  }
+
+  const avoidList = params.recentQuestionTexts.slice(0, 30);
+  const prompt = `
+You are generating fair 1v1 quiz questions for MindClash.
+
+Context:
+- Topic: ${params.topic}
+- Grade: ${params.grade}
+- Faculty: ${params.faculty ?? "none"}
+- Player rating context: ${params.rating}
+- Total questions needed: ${params.count}
+
+Rules:
+1) Return exactly ${params.count} questions.
+2) Include a balanced mix: at least 3 "msq" and at least 2 "open_ended".
+3) Difficulty distribution by rating:
+   - rating < 900: mostly easy
+   - 900-1300: easy/medium mix
+   - 1300-1700: mostly medium
+   - >1700: medium/hard mix
+4) Avoid repeating these recent questions:
+${avoidList.length > 0 ? avoidList.map((q) => `- ${q}`).join("\n") : "- (none)"}
+5) For "msq":
+   - provide exactly 4 options
+   - exactly one correct answer
+   - correctValue must exactly match one option
+6) For "open_ended":
+   - do not provide options
+   - provide a strict canonical expected answer in correctValue
+   - answer should be concise and objectively gradable
+7) Keep questions non-trivial (not too easy) and concise.
+8) No duplicate questions in this batch.
+
+Output JSON only in this exact shape:
+{
+  "questions": [
+    {
+      "text": "...",
+      "difficulty": "easy|medium|hard",
+      "category": "${params.topic}",
+      "questionType": "msq|open_ended",
+      "options": ["...","...","...","..."], // msq only
+      "correctValue": "..."
+    }
+  ]
+}
+`.trim();
+
+  let response: Response | null = null;
+  let lastFailureDetails = "";
+  const modelCandidates = getModelCandidates();
+  for (const model of modelCandidates) {
+    for (let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt += 1) {
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.7,
+              responseMimeType: "application/json",
+            },
+          }),
+        },
+      );
+
+      if (response.ok) break;
+
+      const responseText = (await response.text()).slice(0, 240).replace(/\s+/g, " ");
+      lastFailureDetails = `${model} -> ${response.status}${responseText ? `: ${responseText}` : ""}`;
+      if (response.status === 404) {
+        break;
+      }
+      const canRetry = shouldRetryGeminiStatus(response.status) && attempt < GEMINI_MAX_ATTEMPTS;
+      if (!canRetry) {
+        break;
+      }
+      const waitMs = GEMINI_RETRY_BASE_MS * 2 ** (attempt - 1);
+      await sleep(waitMs);
+    }
+    if (response?.ok) break;
+  }
+
+  if (!response || !response.ok) {
+    throw new Error(`ai_unavailable: Gemini request failed (${lastFailureDetails || "unknown error"})`);
+  }
+
+  const data = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!rawText) throw new Error("ai_unavailable: Gemini returned empty response");
+
+  let parsed: { questions?: AiGeneratedQuestion[] };
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new Error("ai_unavailable: Gemini returned invalid JSON");
+  }
+
+  const questions = parsed.questions ?? [];
+  if (questions.length !== params.count) {
+    throw new Error("ai_unavailable: Gemini returned unexpected question count");
+  }
+
+  const normalized = questions.map((q) => ({
+    text: q.text?.trim(),
+    difficulty: q.difficulty,
+    category: q.category?.trim(),
+    questionType: q.questionType,
+    options: q.options?.map((opt) => opt.trim()).filter(Boolean),
+    correctValue: q.correctValue?.trim(),
+  }));
+
+  for (const q of normalized) {
+    if (!q.text || !q.category || !q.correctValue) {
+      throw new Error("ai_unavailable: Gemini returned incomplete question data");
+    }
+    if (!["easy", "medium", "hard"].includes(q.difficulty)) {
+      throw new Error("ai_unavailable: Gemini returned invalid difficulty");
+    }
+    if (q.questionType === "msq") {
+      if (!q.options || q.options.length !== 4) {
+        throw new Error("ai_unavailable: Gemini returned invalid MSQ options");
+      }
+      if (!q.options.some((opt) => opt.toLowerCase() === q.correctValue!.toLowerCase())) {
+        throw new Error("ai_unavailable: Gemini MSQ correctValue not in options");
+      }
+    }
+  }
+
+  return normalized as AiGeneratedQuestion[];
+}
+
+export const generateAiQuestionsWithGemini = internalAction({
+  args: {
+    topic: v.string(),
+    grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
+    faculty: v.optional(v.string()),
+    rating: v.number(),
+    count: v.number(),
+    recentQuestionTexts: v.array(v.string()),
+  },
+  handler: async (_ctx, args) => {
+    return await generateQuestionsWithGemini({
+      topic: args.topic,
+      grade: args.grade,
+      faculty: args.faculty,
+      rating: args.rating,
+      count: args.count,
+      recentQuestionTexts: args.recentQuestionTexts,
+    });
+  },
+});
+
 const seededCollegeQuestions: Array<{
   category: string;
   faculty: string;
@@ -362,6 +563,198 @@ export const createQuestion = mutation({
     }
 
     return questionId;
+  },
+});
+
+export const getRecentQuestionTextsForTopic = internalQuery({
+  args: {
+    topic: v.string(),
+    grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
+    faculty: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existingTopicQuestions = await ctx.db
+      .query("questions")
+      .withIndex("by_category_grade", (q) => q.eq("category", args.topic).eq("grade", args.grade))
+      .collect();
+    return existingTopicQuestions
+      .filter((q) => (!args.faculty ? true : (q.faculty ?? "") === args.faculty))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 30)
+      .map((q) => q.text);
+  },
+});
+
+export const getFallbackDuelQuestionIds = internalQuery({
+  args: {
+    topic: v.string(),
+    grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
+    faculty: v.optional(v.string()),
+    count: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const questions = await ctx.db
+      .query("questions")
+      .withIndex("by_category_grade", (q) => q.eq("category", args.topic).eq("grade", args.grade))
+      .collect();
+    const filtered = questions.filter((question) => {
+      if (args.faculty && (question.faculty ?? "") !== args.faculty) return false;
+      return true;
+    });
+    const withAnswerKey = await Promise.all(
+      filtered.map(async (question) => {
+        const answerDoc = await ctx.db
+          .query("answers")
+          .withIndex("by_questionId", (q) => q.eq("questionId", question._id))
+          .unique();
+        return { question, hasAnswerKey: Boolean(answerDoc?.correctValue?.trim()) };
+      }),
+    );
+    const gradedEligible = withAnswerKey
+      .filter((item) => {
+        const type = item.question.questionType ?? "open_ended";
+        if (type === "open_ended" && !item.hasAnswerKey) return false;
+        return true;
+      })
+      .map((item) => item.question);
+    const sorted = gradedEligible.sort((a, b) => b.createdAt - a.createdAt);
+    const msq = sorted.filter((question) => (question.questionType ?? "open_ended") === "msq");
+    const openEnded = sorted.filter((question) => (question.questionType ?? "open_ended") === "open_ended");
+
+    // Keep fallback gameplay shape close to AI output: prefer 3 MSQ + 2 open-ended for 5-question duels.
+    const preferredOpen = args.count >= 5 ? 2 : 1;
+    let openTarget = Math.min(preferredOpen, openEnded.length, args.count);
+    let msqTarget = Math.min(args.count - openTarget, msq.length);
+
+    if (msqTarget === 0 && msq.length > 0) {
+      msqTarget = 1;
+      openTarget = Math.max(0, Math.min(openTarget, args.count - 1));
+    }
+    while (openTarget + msqTarget < args.count) {
+      if (msqTarget < msq.length) {
+        msqTarget += 1;
+        continue;
+      }
+      if (openTarget < openEnded.length) {
+        openTarget += 1;
+        continue;
+      }
+      break;
+    }
+
+    return [...msq.slice(0, msqTarget), ...openEnded.slice(0, openTarget)]
+      .slice(0, args.count)
+      .map((question) => question._id);
+  },
+});
+
+export const insertGeneratedAiQuestions = internalMutation({
+  args: {
+    topic: v.string(),
+    grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
+    faculty: v.optional(v.string()),
+    generated: v.array(
+      v.object({
+        text: v.string(),
+        difficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
+        category: v.string(),
+        questionType: v.union(v.literal("open_ended"), v.literal("msq")),
+        options: v.optional(v.array(v.string())),
+        correctValue: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const questionIds = [];
+    for (const question of args.generated) {
+      const questionId = await ctx.db.insert("questions", {
+        text: question.text,
+        difficulty: question.difficulty,
+        category: args.topic,
+        grade: args.grade,
+        faculty: args.faculty,
+        questionType: question.questionType,
+        options: question.questionType === "msq" ? question.options : undefined,
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (question.correctValue) {
+        await ctx.db.insert("answers", {
+          questionId,
+          correctValue: question.correctValue,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+      questionIds.push(questionId);
+    }
+    return questionIds;
+  },
+});
+
+export const generateAiDuelQuestions = action({
+  args: {
+    topic: v.string(),
+    grade: v.union(v.literal("middle"), v.literal("high"), v.literal("college")),
+    faculty: v.optional(v.string()),
+    rating: v.number(),
+    count: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("unauthenticated: You must be signed in.");
+    const user = await ctx.runQuery(api.users.getUserOptional, {});
+    if (!user) throw new Error("unknown_user: Signed-in user profile not found.");
+
+    const count = Math.max(1, Math.min(10, Math.floor(args.count ?? DEFAULT_AI_DUEL_QUESTION_COUNT)));
+    const topic = args.topic.trim();
+    const faculty = args.faculty?.trim() || undefined;
+    if (!topic) throw new Error("validation_error: topic is required");
+
+    const recentQuestionTexts: string[] = await ctx.runQuery(internal.questions.getRecentQuestionTextsForTopic, {
+      topic,
+      grade: args.grade,
+      faculty,
+    });
+
+    let questionIds: Id<"questions">[] = [];
+    let modelUsed = GEMINI_MODEL;
+    try {
+      const generated: AiGeneratedQuestion[] = await ctx.runAction(internal.questions.generateAiQuestionsWithGemini, {
+        topic,
+        grade: args.grade,
+        faculty,
+        rating: args.rating,
+        count,
+        recentQuestionTexts,
+      });
+
+      questionIds = await ctx.runMutation(internal.questions.insertGeneratedAiQuestions, {
+        topic,
+        grade: args.grade,
+        faculty,
+        generated,
+      });
+    } catch {
+      questionIds = await ctx.runQuery(internal.questions.getFallbackDuelQuestionIds, {
+        topic,
+        grade: args.grade,
+        faculty,
+        count,
+      });
+      modelUsed = "local_fallback_bank";
+    }
+
+    if (questionIds.length === 0) {
+      throw new Error("ai_unavailable: No questions available for this topic right now");
+    }
+
+    return {
+      questionIds,
+      count: questionIds.length,
+      model: modelUsed,
+    };
   },
 });
 

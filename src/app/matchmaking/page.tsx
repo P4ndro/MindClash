@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { UserButton, useUser } from "@clerk/nextjs";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "../../../convex/_generated/api";
@@ -49,14 +49,9 @@ export default function MatchmakingPage() {
     grade: selectedGrade,
     faculty: needsFaculty ? selectedFaculty || undefined : undefined,
   });
-  const questionIds = useQuery(api.questions.getQuestionsForQuickPlay, {
-    category: selectedTopic || undefined,
-    grade: selectedGrade,
-    faculty: needsFaculty ? selectedFaculty || undefined : undefined,
-    limit: 10,
-  });
 
   const findOrCreateDuelMatch = useMutation(api.matches.findOrCreateDuelMatch);
+  const generateAiDuelQuestions = useAction(api.questions.generateAiDuelQuestions);
 
   const selectedTopicRating = useMemo(() => {
     if (!selectedTopic || !courseRatings) return 1000;
@@ -92,10 +87,10 @@ export default function MatchmakingPage() {
       hasCurrentUser: Boolean(currentUser),
       optionsCount: options?.topics?.length ?? -1,
       waitingCount: waitingDuels?.length ?? -1,
-      questionCount: questionIds?.length ?? -1,
+      questionCount: -1,
       ratingsStatus: courseRatings === undefined ? "loading" : courseRatings === null ? "null" : "loaded",
     });
-  }, [selectedTopic, selectedGrade, selectedFaculty, currentUser, options, waitingDuels, questionIds, courseRatings]);
+  }, [selectedTopic, selectedGrade, selectedFaculty, currentUser, options, waitingDuels, courseRatings]);
 
   async function handleFindMatch() {
     debugLog("start matchmaking clicked", {
@@ -104,7 +99,7 @@ export default function MatchmakingPage() {
       selectedFaculty,
       hasCurrentUser: Boolean(currentUser),
       waitingCount: waitingDuels?.length ?? -1,
-      questionCount: questionIds?.length ?? -1,
+      questionCount: -1,
     });
     if (!selectedTopic) {
       setError("Choose a topic before starting matchmaking.");
@@ -118,20 +113,25 @@ export default function MatchmakingPage() {
       setError("Choose a faculty for college matchmaking.");
       return;
     }
-    if (!questionIds || questionIds.length === 0) {
-      setError("No auto-gradable MSQ questions exist for this queue yet.");
-      return;
-    }
-
     setIsFindingMatch(true);
     setError(null);
     try {
+      const generated = await generateAiDuelQuestions({
+        topic: selectedTopic,
+        grade: selectedGrade,
+        faculty: needsFaculty ? selectedFaculty : undefined,
+        rating: selectedTopicRating,
+        count: 5,
+      });
+      if (!generated.questionIds || generated.questionIds.length !== 5) {
+        throw new Error("AI generation failed to produce a valid 5-question set.");
+      }
       const result = await findOrCreateDuelMatch({
         playerId: resolvedUser._id,
         topic: selectedTopic,
         grade: selectedGrade,
         faculty: needsFaculty ? selectedFaculty : undefined,
-        questionIds,
+        questionIds: generated.questionIds,
       });
       debugLog("server matchmaking result snapshot", {
         joinedExisting: result.joinedExisting,
@@ -286,8 +286,7 @@ export default function MatchmakingPage() {
                 currentUser === undefined ||
                 (currentUser === null && userByClerkId === undefined) ||
                 options === undefined ||
-                waitingDuels === undefined ||
-                questionIds === undefined
+                waitingDuels === undefined
               }
               className="w-full md:w-auto px-8 py-3 bg-linear-to-br from-primary to-[#4d8eff] text-on-primary-container text-sm font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
             >

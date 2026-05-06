@@ -1,4 +1,12 @@
-import { mutation, query, MutationCtx, QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
+import {
+  internalAction,
+  internalMutation,
+  mutation,
+  query,
+  MutationCtx,
+  QueryCtx,
+} from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { computeMatchScores, QuestionAnswers } from "./gameplayScoring";
@@ -6,6 +14,176 @@ import { computeMatchScores, QuestionAnswers } from "./gameplayScoring";
 type MatchDoc = Doc<"matches">;
 type UserId = Id<"users">;
 type GameplayCtx = MutationCtx | QueryCtx;
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+
+async function gradeOpenEndedWithGemini(params: {
+  questionText: string;
+  expectedAnswer: string;
+  submittedAnswer: string;
+  difficulty: "easy" | "medium" | "hard";
+  category: string;
+}): Promise<{ aiScore: number; aiConfidence: number; gradingReason: string; isCorrect: boolean }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("ai_unavailable: GEMINI_API_KEY is missing");
+  }
+
+  const prompt = `
+You are grading a competitive quiz answer strictly.
+Return JSON only.
+
+Question: ${params.questionText}
+Category: ${params.category}
+Difficulty: ${params.difficulty}
+Expected canonical answer: ${params.expectedAnswer}
+Submitted answer: ${params.submittedAnswer}
+
+Scoring rules:
+- Be strict and fair; do NOT be lenient.
+- 1.0 means semantically equivalent and correct.
+- 0.0 means incorrect.
+- Minor spelling mistakes may pass only if meaning is exact.
+- If ambiguous, score low.
+
+Output:
+{
+  "aiScore": number,          // 0..1
+  "aiConfidence": number,     // 0..1
+  "gradingReason": string
+}
+`.trim();
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`ai_unavailable: Gemini request failed (${response.status})`);
+  }
+
+  const data = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!raw) throw new Error("ai_unavailable: Gemini returned empty grading response");
+
+  let parsed: { aiScore?: number; aiConfidence?: number; gradingReason?: string };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("ai_unavailable: Gemini returned invalid grading JSON");
+  }
+
+  const aiScore = Math.max(0, Math.min(1, Number(parsed.aiScore ?? 0)));
+  const aiConfidence = Math.max(0, Math.min(1, Number(parsed.aiConfidence ?? 0)));
+  const gradingReason = (parsed.gradingReason ?? "AI grading unavailable").toString().slice(0, 500);
+  const isCorrect = aiScore >= 0.75 && aiConfidence >= 0.6;
+
+  return { aiScore, aiConfidence, gradingReason, isCorrect };
+}
+
+export const applyOpenEndedGrade = internalMutation({
+  args: {
+    userAnswerId: v.id("userAnswers"),
+    isCorrect: v.optional(v.boolean()),
+    gradingStatus: v.union(v.literal("graded"), v.literal("review_required")),
+    aiScore: v.optional(v.number()),
+    aiConfidence: v.optional(v.number()),
+    gradingReason: v.string(),
+    aiModel: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.userAnswerId, {
+      isCorrect: args.isCorrect,
+      gradingStatus: args.gradingStatus,
+      aiScore: args.aiScore,
+      aiConfidence: args.aiConfidence,
+      gradingReason: args.gradingReason,
+      aiModel: args.aiModel,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const finalizeMatchIfReadyFromAnswer = internalMutation({
+  args: {
+    userAnswerId: v.id("userAnswers"),
+  },
+  handler: async (ctx, args) => {
+    const userAnswer = await ctx.db.get(args.userAnswerId);
+    if (!userAnswer) return;
+    const matchQuestion = await ctx.db.get(userAnswer.matchQuestionId);
+    if (!matchQuestion) return;
+    const state = await ctx.db
+      .query("matchState")
+      .withIndex("by_matchId", (q) => q.eq("matchId", matchQuestion.matchId))
+      .unique();
+    if (!state || state.phase !== "review") return;
+    const match = await ctx.db.get(matchQuestion.matchId);
+    if (!match || match.status !== "active") return;
+    await finalizeMatch(ctx, matchQuestion.matchId, Date.now());
+  },
+});
+
+export const gradeOpenEndedWithGeminiJob = internalAction({
+  args: {
+    userAnswerId: v.id("userAnswers"),
+    questionText: v.string(),
+    expectedAnswer: v.string(),
+    submittedAnswer: v.string(),
+    difficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
+    category: v.string(),
+  },
+  handler: async (ctx, args) => {
+    try {
+      const graded = await gradeOpenEndedWithGemini({
+        questionText: args.questionText,
+        expectedAnswer: args.expectedAnswer,
+        submittedAnswer: args.submittedAnswer,
+        difficulty: args.difficulty,
+        category: args.category,
+      });
+      await ctx.runMutation(internal.gameplay.applyOpenEndedGrade, {
+        userAnswerId: args.userAnswerId,
+        isCorrect: graded.isCorrect,
+        gradingStatus: "graded",
+        aiScore: graded.aiScore,
+        aiConfidence: graded.aiConfidence,
+        gradingReason: graded.gradingReason,
+        aiModel: GEMINI_MODEL,
+      });
+      await ctx.runMutation(internal.gameplay.finalizeMatchIfReadyFromAnswer, {
+        userAnswerId: args.userAnswerId,
+      });
+    } catch (error) {
+      await ctx.runMutation(internal.gameplay.applyOpenEndedGrade, {
+        userAnswerId: args.userAnswerId,
+        isCorrect: false,
+        gradingStatus: "graded",
+        aiScore: 0,
+        aiConfidence: 0,
+        gradingReason:
+          error instanceof Error
+            ? `AI grading unavailable, scored 0: ${error.message}`.slice(0, 500)
+            : "AI grading unavailable, scored 0.",
+      });
+      await ctx.runMutation(internal.gameplay.finalizeMatchIfReadyFromAnswer, {
+        userAnswerId: args.userAnswerId,
+      });
+    }
+  },
+});
 
 async function getCurrentUser(ctx: MutationCtx) {
   const identity = await ctx.auth.getUserIdentity();
@@ -54,6 +232,16 @@ async function requireCurrentQueryUser(ctx: QueryCtx) {
     .unique();
   if (!user) throw new Error("unknown_user: Signed-in user profile not found.");
   return user;
+}
+
+async function getCurrentQueryUserOptional(ctx: QueryCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return null;
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
+    .unique();
+  return user ?? null;
 }
 
 function normalizeAnswer(value: string) {
@@ -131,6 +319,7 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
 
   const userTeamCache = new Map<string, string[]>();
   const scoringQuestions: QuestionAnswers[] = [];
+  let pendingOpenEndedAnswers = 0;
 
   for (const mq of matchQuestions) {
     const questionDoc = await ctx.db.get(mq.questionId);
@@ -149,6 +338,10 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
       })),
     });
 
+    if ((questionDoc?.questionType ?? "open_ended") === "open_ended") {
+      pendingOpenEndedAnswers += answersForQuestion.filter((a) => a.gradingStatus === "pending").length;
+    }
+
     if (match.mode === "team") {
       for (const answer of answersForQuestion) {
         const userKey = answer.userId.toString();
@@ -163,6 +356,25 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
         );
       }
     }
+  }
+
+  if (pendingOpenEndedAnswers > 0) {
+    const state = await ctx.db
+      .query("matchState")
+      .withIndex("by_matchId", (q) => q.eq("matchId", matchId))
+      .unique();
+    if (state) {
+      await ctx.db.patch(state._id, {
+        phase: "review",
+        timeRemaining: 0,
+        questionEndsAt: now,
+        updatedAt: now,
+      });
+    }
+    return {
+      gradingPending: true,
+      pendingAnswers: pendingOpenEndedAnswers,
+    };
   }
 
   const userTeamMembership: Record<string, string[]> = {};
@@ -307,6 +519,7 @@ export const submitAnswer = mutation({
       throw new Error("validation_error: submittedAnswer is required");
     }
     let isCorrect: boolean | undefined = undefined;
+    let gradingStatus: "pending" | "graded" | "review_required" | undefined = undefined;
     if (questionType === "msq") {
       const answerDoc = await ctx.db
         .query("answers")
@@ -316,6 +529,9 @@ export const submitAnswer = mutation({
         throw new Error("Answer key not found for MSQ question");
       }
       isCorrect = normalizeAnswer(submitted) === normalizeAnswer(answerDoc.correctValue);
+      gradingStatus = "graded";
+    } else {
+      gradingStatus = "pending";
     }
 
     const userAnswerId = await ctx.db.insert("userAnswers", {
@@ -323,11 +539,57 @@ export const submitAnswer = mutation({
       matchQuestionId: args.matchQuestionId,
       submittedAnswer: submitted,
       isCorrect,
+      gradingStatus,
+      aiScore: undefined,
+      aiConfidence: undefined,
+      gradingReason: undefined,
+      aiModel: undefined,
       responseTime: args.responseTime,
       submittedAt: now,
       createdAt: now,
       updatedAt: now,
     });
+
+    if (questionType === "open_ended") {
+      try {
+        const answerDoc = await ctx.db
+          .query("answers")
+          .withIndex("by_questionId", (q) => q.eq("questionId", matchQuestion.questionId))
+          .unique();
+        const expectedAnswer = answerDoc?.correctValue?.trim();
+        if (!expectedAnswer) {
+          await ctx.db.patch(userAnswerId, {
+            isCorrect: false,
+            gradingStatus: "graded",
+            aiScore: 0,
+            aiConfidence: 0,
+            gradingReason: "No canonical answer available. Scored 0.",
+            updatedAt: Date.now(),
+          });
+        } else {
+          await ctx.scheduler.runAfter(0, internal.gameplay.gradeOpenEndedWithGeminiJob, {
+            userAnswerId,
+            questionText: questionDoc.text,
+            expectedAnswer,
+            submittedAnswer: submitted,
+            difficulty: questionDoc.difficulty,
+            category: questionDoc.category,
+          });
+        }
+      } catch (error) {
+        await ctx.db.patch(userAnswerId, {
+          isCorrect: false,
+          gradingStatus: "graded",
+          aiScore: 0,
+          aiConfidence: 0,
+          gradingReason:
+            error instanceof Error
+              ? `AI grading unavailable, scored 0: ${error.message}`.slice(0, 500)
+              : "AI grading unavailable, scored 0.",
+          updatedAt: Date.now(),
+        });
+      }
+    }
 
     return { userAnswerId, isCorrect };
   },
@@ -547,14 +809,17 @@ export const getMatchBreakdown = query({
           .first();
 
         const weight = getDifficultyWeight(question.difficulty);
-        const gradingStatus =
-          myAnswer?.isCorrect === true
-            ? "correct"
-            : myAnswer?.isCorrect === false
-              ? "incorrect"
-              : myAnswer
-                ? "pending"
-                : "unanswered";
+        const gradingStatus = myAnswer
+          ? myAnswer.gradingStatus === "review_required"
+            ? "review_required"
+            : myAnswer.gradingStatus === "pending"
+              ? "pending"
+              : myAnswer.isCorrect === true
+                ? "correct"
+                : myAnswer.isCorrect === false
+                  ? "incorrect"
+                  : "pending"
+          : "unanswered";
         const pointsEarned = myAnswer?.isCorrect === true ? weight : 0;
 
         return {
@@ -581,7 +846,8 @@ export const getMatchState = query({
     matchId: v.id("matches"),
   },
   handler: async (ctx, args) => {
-    const user = await requireCurrentQueryUser(ctx);
+    const user = await getCurrentQueryUserOptional(ctx);
+    if (!user) return null;
     const match = await ctx.db.get(args.matchId);
     if (!match) throw new Error("Match not found");
     await assertParticipant(ctx, match, user._id);
@@ -600,7 +866,8 @@ export const getCurrentQuestionForMatch = query({
     matchId: v.id("matches"),
   },
   handler: async (ctx, args) => {
-    const user = await requireCurrentQueryUser(ctx);
+    const user = await getCurrentQueryUserOptional(ctx);
+    if (!user) return null;
     const match = await ctx.db.get(args.matchId);
     if (!match) throw new Error("Match not found");
     await assertParticipant(ctx, match, user._id);
@@ -703,7 +970,10 @@ export const getAnswersCountForCurrentQuestion = query({
     matchId: v.id("matches"),
   },
   handler: async (ctx, args) => {
-    const user = await requireCurrentQueryUser(ctx);
+    const user = await getCurrentQueryUserOptional(ctx);
+    if (!user) {
+      return { count: 0 };
+    }
     const match = await ctx.db.get(args.matchId);
     if (!match) throw new Error("Match not found");
     await assertParticipant(ctx, match, user._id);
