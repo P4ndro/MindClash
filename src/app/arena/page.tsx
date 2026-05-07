@@ -39,6 +39,12 @@ function getDifficultyWeight(difficulty: "easy" | "medium" | "hard") {
   return 1;
 }
 
+function getQuestionDurationMs(difficulty: "easy" | "medium" | "hard") {
+  if (difficulty === "hard") return 60_000;
+  if (difficulty === "medium") return 45_000;
+  return 30_000;
+}
+
 const AUTH_SYNC_ERROR_CODES = new Set(["unauthenticated", "unknown_user"]);
 
 function sleep(ms: number) {
@@ -136,7 +142,7 @@ function ArenaPageContent() {
     return Math.max(0, matchState.questionEndsAt - nowMs);
   }, [matchState?.questionEndsAt, nowMs]);
 
-  const totalForProgress = 30_000;
+  const totalForProgress = currentQuestion ? getQuestionDurationMs(currentQuestion.question.difficulty) : 30_000;
   const timerProgress = Math.max(0, Math.min(100, (remainingMs / totalForProgress) * 100));
   const timerSeconds = (remainingMs / 1000).toFixed(1);
   const hasAnswered = myAnswer?.hasAnswered === true;

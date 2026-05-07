@@ -593,16 +593,16 @@ export const getFallbackDuelQuestionIds = internalQuery({
     count: v.number(),
   },
   handler: async (ctx, args) => {
-    const questions = await ctx.db
+    const topicQuestions = await ctx.db
       .query("questions")
       .withIndex("by_category_grade", (q) => q.eq("category", args.topic).eq("grade", args.grade))
       .collect();
-    const filtered = questions.filter((question) => {
+    const filteredTopic = topicQuestions.filter((question) => {
       if (args.faculty && (question.faculty ?? "") !== args.faculty) return false;
       return true;
     });
     const withAnswerKey = await Promise.all(
-      filtered.map(async (question) => {
+      filteredTopic.map(async (question) => {
         const answerDoc = await ctx.db
           .query("answers")
           .withIndex("by_questionId", (q) => q.eq("questionId", question._id))

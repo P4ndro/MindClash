@@ -10,6 +10,12 @@ import {
 import { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { computeMatchScores, QuestionAnswers } from "./gameplayScoring";
+import { requireAdmin } from "./auth";
+import {
+  getOpenEndedRegradeDelayMs,
+  shouldFinalizeMatchWithPendingOpenEnded,
+  shouldQueueOpenEndedRegrade,
+} from "./gameplayAiPolicy";
 
 type MatchDoc = Doc<"matches">;
 type UserId = Id<"users">;
@@ -97,7 +103,7 @@ export const applyOpenEndedGrade = internalMutation({
   args: {
     userAnswerId: v.id("userAnswers"),
     isCorrect: v.optional(v.boolean()),
-    gradingStatus: v.union(v.literal("graded"), v.literal("review_required")),
+    gradingStatus: v.union(v.literal("pending"), v.literal("graded"), v.literal("review_required")),
     aiScore: v.optional(v.number()),
     aiConfidence: v.optional(v.number()),
     gradingReason: v.string(),
@@ -144,8 +150,10 @@ export const gradeOpenEndedWithGeminiJob = internalAction({
     submittedAnswer: v.string(),
     difficulty: v.union(v.literal("easy"), v.literal("medium"), v.literal("hard")),
     category: v.string(),
+    attempt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const attempt = Math.max(0, Math.floor(args.attempt ?? 0));
     try {
       const graded = await gradeOpenEndedWithGemini({
         questionText: args.questionText,
@@ -167,17 +175,31 @@ export const gradeOpenEndedWithGeminiJob = internalAction({
         userAnswerId: args.userAnswerId,
       });
     } catch (error) {
-      await ctx.runMutation(internal.gameplay.applyOpenEndedGrade, {
-        userAnswerId: args.userAnswerId,
-        isCorrect: false,
-        gradingStatus: "graded",
-        aiScore: 0,
-        aiConfidence: 0,
-        gradingReason:
-          error instanceof Error
-            ? `AI grading unavailable, scored 0: ${error.message}`.slice(0, 500)
-            : "AI grading unavailable, scored 0.",
-      });
+      const errorMessage = error instanceof Error ? error.message : "AI grading failed.";
+      if (shouldQueueOpenEndedRegrade(errorMessage, attempt)) {
+        await ctx.runMutation(internal.gameplay.applyOpenEndedGrade, {
+          userAnswerId: args.userAnswerId,
+          gradingStatus: "pending",
+          gradingReason: `AI temporarily unavailable. Retry ${attempt + 1} queued.`,
+        });
+        await ctx.scheduler.runAfter(
+          getOpenEndedRegradeDelayMs(attempt),
+          internal.gameplay.gradeOpenEndedWithGeminiJob,
+          {
+            ...args,
+            attempt: attempt + 1,
+          },
+        );
+      } else {
+        await ctx.runMutation(internal.gameplay.applyOpenEndedGrade, {
+          userAnswerId: args.userAnswerId,
+          gradingStatus: "review_required",
+          gradingReason:
+            error instanceof Error
+              ? `AI grading failed after retries: ${error.message}`.slice(0, 500)
+              : "AI grading failed after retries, manual review required.",
+        });
+      }
       await ctx.runMutation(internal.gameplay.finalizeMatchIfReadyFromAnswer, {
         userAnswerId: args.userAnswerId,
       });
@@ -248,10 +270,57 @@ function normalizeAnswer(value: string) {
   return value.trim().toLowerCase();
 }
 
+function isDeterministicOpenEndedMatch(submitted: string, expected: string) {
+  const normalizedSubmitted = normalizeAnswer(submitted).replace(/\s+/g, " ");
+  const normalizedExpected = normalizeAnswer(expected).replace(/\s+/g, " ");
+  if (normalizedSubmitted === normalizedExpected) return true;
+
+  const numericSubmitted = Number(normalizedSubmitted);
+  const numericExpected = Number(normalizedExpected);
+  if (Number.isFinite(numericSubmitted) && Number.isFinite(numericExpected)) {
+    return numericSubmitted === numericExpected;
+  }
+
+  const submittedCompact = normalizedSubmitted.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  const expectedCompact = normalizedExpected.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!submittedCompact || !expectedCompact) return false;
+
+  if (submittedCompact === expectedCompact) return true;
+  if (submittedCompact.includes(expectedCompact) || expectedCompact.includes(submittedCompact)) {
+    return true;
+  }
+
+  const stopwords = new Set(["the", "a", "an", "of", "to", "and", "or", "in", "on", "for", "with"]);
+  const submittedTokens = submittedCompact
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !stopwords.has(token));
+  const expectedTokens = expectedCompact
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !stopwords.has(token));
+  if (submittedTokens.length === 0 || expectedTokens.length === 0) return false;
+
+  const submittedSet = new Set(submittedTokens);
+  let overlap = 0;
+  for (const token of expectedTokens) {
+    if (submittedSet.has(token)) overlap += 1;
+  }
+  const overlapRatio = overlap / expectedTokens.length;
+  if (overlapRatio >= 0.8) return true;
+  return false;
+}
+
 function getDifficultyWeight(difficulty: "easy" | "medium" | "hard") {
   if (difficulty === "hard") return 3;
   if (difficulty === "medium") return 2;
   return 1;
+}
+
+function getQuestionDurationMsByDifficulty(difficulty: "easy" | "medium" | "hard") {
+  if (difficulty === "hard") return 60_000;
+  if (difficulty === "medium") return 45_000;
+  return 30_000;
 }
 
 async function getOrCreateCourseRating(
@@ -358,7 +427,7 @@ async function finalizeMatch(ctx: MutationCtx, matchId: Id<"matches">, now: numb
     }
   }
 
-  if (pendingOpenEndedAnswers > 0) {
+  if (!shouldFinalizeMatchWithPendingOpenEnded(pendingOpenEndedAnswers)) {
     const state = await ctx.db
       .query("matchState")
       .withIndex("by_matchId", (q) => q.eq("matchId", matchId))
@@ -559,22 +628,24 @@ export const submitAnswer = mutation({
         const expectedAnswer = answerDoc?.correctValue?.trim();
         if (!expectedAnswer) {
           await ctx.db.patch(userAnswerId, {
-            isCorrect: false,
-            gradingStatus: "graded",
-            aiScore: 0,
-            aiConfidence: 0,
-            gradingReason: "No canonical answer available. Scored 0.",
+            gradingStatus: "review_required",
+            gradingReason: "No canonical answer available for this open-ended question.",
             updatedAt: Date.now(),
           });
         } else {
-          await ctx.scheduler.runAfter(0, internal.gameplay.gradeOpenEndedWithGeminiJob, {
-            userAnswerId,
-            questionText: questionDoc.text,
-            expectedAnswer,
-            submittedAnswer: submitted,
-            difficulty: questionDoc.difficulty,
-            category: questionDoc.category,
+          const matched = isDeterministicOpenEndedMatch(submitted, expectedAnswer);
+          await ctx.db.patch(userAnswerId, {
+            isCorrect: matched,
+            gradingStatus: "graded",
+            aiScore: matched ? 1 : 0,
+            aiConfidence: 1,
+            gradingReason: matched
+              ? "Matched canonical answer."
+              : "Did not match canonical answer.",
+            aiModel: "canonical_answer_compare_v1",
+            updatedAt: Date.now(),
           });
+          isCorrect = matched;
         }
       } catch (error) {
         await ctx.db.patch(userAnswerId, {
@@ -584,8 +655,8 @@ export const submitAnswer = mutation({
           aiConfidence: 0,
           gradingReason:
             error instanceof Error
-              ? `AI grading unavailable, scored 0: ${error.message}`.slice(0, 500)
-              : "AI grading unavailable, scored 0.",
+              ? `Grading failed, scored 0: ${error.message}`.slice(0, 500)
+              : "Grading failed, scored 0.",
           updatedAt: Date.now(),
         });
       }
@@ -602,7 +673,6 @@ export const advanceQuestion = mutation({
   handler: async (ctx, args) => {
     const now = Date.now();
     const currentUser = await getCurrentUser(ctx);
-    const questionDurationMs = 30_000;
 
     const match = await ctx.db.get(args.matchId);
     if (!match) throw new Error("Match not found");
@@ -718,6 +788,12 @@ export const advanceQuestion = mutation({
       const result = await finalizeMatch(ctx, args.matchId, now);
       return { hasNext: false, nextQuestion: null, ...result };
     }
+
+    const nextQuestionLink = questions[nextQuestion];
+    const nextQuestionDoc = await ctx.db.get(nextQuestionLink.questionId);
+    const questionDurationMs = nextQuestionDoc
+      ? getQuestionDurationMsByDifficulty(nextQuestionDoc.difficulty)
+      : 30_000;
 
     await ctx.db.patch(state._id, {
       currentQuestion: nextQuestion,
@@ -838,6 +914,85 @@ export const getMatchBreakdown = query({
     );
 
     return rounds.filter((round) => round !== null);
+  },
+});
+
+export const getMatchGradingDebug = query({
+  args: {
+    matchId: v.id("matches"),
+  },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    const links = await ctx.db
+      .query("matchQuestions")
+      .withIndex("by_match_order", (q) => q.eq("matchId", args.matchId))
+      .collect();
+    const rows = await Promise.all(
+      links.map(async (link) => {
+        const question = await ctx.db.get(link.questionId);
+        const answers = await ctx.db
+          .query("userAnswers")
+          .withIndex("by_matchQuestionId", (q) => q.eq("matchQuestionId", link._id))
+          .collect();
+        return {
+          order: link.order,
+          questionText: question?.text ?? "missing_question",
+          questionType: question?.questionType ?? "open_ended",
+          answers: answers.map((a) => ({
+            userId: a.userId,
+            submittedAnswer: a.submittedAnswer,
+            gradingStatus: a.gradingStatus ?? null,
+            isCorrect: a.isCorrect ?? null,
+            aiModel: a.aiModel ?? null,
+            gradingReason: a.gradingReason ?? null,
+            aiScore: a.aiScore ?? null,
+            aiConfidence: a.aiConfidence ?? null,
+          })),
+        };
+      }),
+    );
+    return rows;
+  },
+});
+
+export const queueOpenEndedRegrade = mutation({
+  args: {
+    userAnswerId: v.id("userAnswers"),
+  },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx);
+    const userAnswer = await ctx.db.get(args.userAnswerId);
+    if (!userAnswer) throw new Error("User answer not found");
+    const matchQuestion = await ctx.db.get(userAnswer.matchQuestionId);
+    if (!matchQuestion) throw new Error("Match question not found");
+    const questionDoc = await ctx.db.get(matchQuestion.questionId);
+    if (!questionDoc) throw new Error("Question not found");
+    if ((questionDoc.questionType ?? "open_ended") !== "open_ended") {
+      throw new Error("Only open-ended answers can be regraded");
+    }
+    const answerDoc = await ctx.db
+      .query("answers")
+      .withIndex("by_questionId", (q) => q.eq("questionId", matchQuestion.questionId))
+      .unique();
+    const expectedAnswer = answerDoc?.correctValue?.trim();
+    if (!expectedAnswer) {
+      throw new Error("No canonical answer available for regrade");
+    }
+    await ctx.db.patch(args.userAnswerId, {
+      gradingStatus: "pending",
+      gradingReason: "Manual regrade queued by admin.",
+      updatedAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.gameplay.gradeOpenEndedWithGeminiJob, {
+      userAnswerId: args.userAnswerId,
+      questionText: questionDoc.text,
+      expectedAnswer,
+      submittedAnswer: userAnswer.submittedAnswer,
+      difficulty: questionDoc.difficulty,
+      category: questionDoc.category,
+      attempt: 0,
+    });
+    return { queued: true };
   },
 });
 

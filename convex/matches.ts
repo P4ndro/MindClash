@@ -7,6 +7,23 @@ const STALE_WAITING_MATCH_MS = 5 * 60 * 1000;
 
 type MatchCtx = MutationCtx | QueryCtx;
 
+function getQuestionDurationMsByDifficulty(difficulty: "easy" | "medium" | "hard") {
+  if (difficulty === "hard") return 60_000;
+  if (difficulty === "medium") return 45_000;
+  return 30_000;
+}
+
+async function getInitialQuestionDurationMs(ctx: MutationCtx, matchId: Id<"matches">) {
+  const firstLink = await ctx.db
+    .query("matchQuestions")
+    .withIndex("by_match_order", (q) => q.eq("matchId", matchId).eq("order", 0))
+    .unique();
+  if (!firstLink) return 30_000;
+  const firstQuestion = await ctx.db.get(firstLink.questionId);
+  if (!firstQuestion) return 30_000;
+  return getQuestionDurationMsByDifficulty(firstQuestion.difficulty);
+}
+
 async function assertDuelParticipant(ctx: MatchCtx, matchId: Id<"matches">, userId: Id<"users">) {
   const match = await ctx.db.get(matchId);
   if (!match) throw new Error("Match not found");
@@ -106,7 +123,7 @@ export const joinMatch = mutation({
     }
 
     const now = Date.now();
-    const questionDurationMs = 30_000;
+    const questionDurationMs = await getInitialQuestionDurationMs(ctx, args.matchId);
 
     if (match.mode === "duel") {
       if (!args.player2Id) {
@@ -254,7 +271,6 @@ export const findOrCreateDuelMatch = mutation({
     }
 
     const now = Date.now();
-    const questionDurationMs = 30_000;
     const normalizedTopic = args.topic?.trim() || undefined;
     const normalizedFaculty = args.faculty?.trim() || undefined;
 
@@ -295,6 +311,7 @@ export const findOrCreateDuelMatch = mutation({
       .sort((a, b) => b.createdAt - a.createdAt)[0];
 
     if (joinable) {
+      const questionDurationMs = await getInitialQuestionDurationMs(ctx, joinable._id);
       await ctx.db.patch(joinable._id, {
         player2Id: authenticatedPlayerId,
         status: "active",

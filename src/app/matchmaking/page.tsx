@@ -123,8 +123,8 @@ export default function MatchmakingPage() {
         rating: selectedTopicRating,
         count: 5,
       });
-      if (!generated.questionIds || generated.questionIds.length !== 5) {
-        throw new Error("AI generation failed to produce a valid 5-question set.");
+      if (!generated.questionIds || generated.questionIds.length === 0) {
+        throw new Error("AI generation failed to produce any questions for this queue.");
       }
       const result = await findOrCreateDuelMatch({
         playerId: resolvedUser._id,
